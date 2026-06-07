@@ -6,7 +6,7 @@ Detect the host environment, select a recipe folder that matches the detected di
 
 ## Scope
 
-This file is distro-agnostic. It runs first, before any distro-specific recipe is loaded. Distro-specific instructions live under `recipes/<DISTRO>/`.
+This file is distro-agnostic. It runs first, before any distro-specific recipe is loaded. Distro-specific instructions live under `references/<DISTRO>/`.
 
 ## Pre-flight (abort on failure)
 
@@ -142,7 +142,7 @@ If any of `make`, `cmake`, `gcc`, `g++`, `git`, `curl`, `jq`, `pkg-config` is mi
   - `id=alpine` → `apk`
   - `id=opensuse*` → `zypper`
   - Anything else → use the next step (fallback).
-- Fallback: if no heuristic matches, do **not** guess. Abort the verdict with: "Detected distro `<id> <version>` has no install command registered in detect.md. Open a recipe under `recipes/<id>-<version>/` to add one, or contribute the install command to detect.md's heuristic list." Print the missing tools and the heuristic list so the contributor can copy the format.
+- Fallback: if no heuristic matches, do **not** guess. Abort the verdict with: "Detected distro `<id> <version>` has no install command registered in detect.md. Open a recipe under `references/<id>-<version>/` to add one, or contribute the install command to detect.md's heuristic list." Print the missing tools and the heuristic list so the contributor can copy the format.
 - The user runs the install manually, then re-invokes the skill so this recipe runs again from the top and validates.
 - **Render rule for the `Tools:` row**: render missing tools inline in a single row, e.g. `Tools: git OK, make MISSING, cmake MISSING, gcc OK, g++ OK, curl OK, jq MISSING, pkg-config OK`. Do not split into two rows.
 - Canonical layout when the verdict is `blocked` due to missing tools (checklist; use this exact order):
@@ -179,17 +179,17 @@ After the detection steps, select a recipe folder using the table below. Matchin
 | `ubuntu` | `26.04` | false | `ubuntu-26.04` |
 | `ubuntu` | `24.04` | true | `ubuntu-24.04-wsl2` |
 | `ubuntu` | `24.04` | false | `ubuntu-24.04` |
-| `ubuntu` | any other | any | abort: "No recipe for ubuntu <version>. Open an issue or contribute one under `recipes/ubuntu-<version>/`." |
+| `ubuntu` | any other | any | abort: "No recipe for ubuntu <version>. Open an issue or contribute one under `references/ubuntu-<version>/`." |
 | `debian` | `12` | any | `debian-12` |
 | `debian` | any other | any | abort: "No recipe for debian <version>." |
 | `fedora` | `41` | any | `fedora-41` |
 | `fedora` | any other | any | abort: "No recipe for fedora <version>." |
 | `arch` | rolling | any | `arch` |
-| anything else | — | — | abort: "No recipe for <id> <version>. Available recipes: <list folders under recipes/>." |
+| anything else | — | — | abort: "No recipe for <id> <version>. Available recipes: <list folders under references/>." |
 
 If the recipe folder does not exist on disk → abort with: "Selected recipe folder `<folder>` does not exist in the repo. Pull the latest version or contribute the recipe."
 
-The folder existence check is mandatory. After selecting the folder from the table, the agent must run `test -d recipes/<folder>` (or `stat recipes/<folder>`) and abort if the folder is absent.
+The folder existence check is mandatory. After selecting the folder from the table, the agent must run `test -d references/<folder>` (or `stat references/<folder>`) and abort if the folder is absent.
 
 ## Report to the user
 
@@ -210,7 +210,7 @@ Disk free:        952 GiB
 Tools:            git OK, make OK, cmake OK, gcc OK, g++ OK, curl OK, jq OK, pkg-config OK
 Docker group:     user jorge is in docker group
 
-Selected recipe:  recipes/ubuntu-26.04-wsl2/
+Selected recipe:  references/ubuntu-26.04-wsl2/
 
 Verdict: ready
 ```

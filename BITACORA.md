@@ -17,6 +17,8 @@
 | --- | --- | --- | --- | --- |
 | 01 | 2026-06-07 | Environment detection | ✅ OK | First run on Ubuntu 26.04 WSL2. 2× NVIDIA GPUs detected. |
 | 02 | 2026-06-07 | Subagent test of detect.md (6 iterations) | ✅ Robust | 18 improvements applied, 1 rejection maintained (per-distro table), resolved with a hybrid heuristic+fallback. |
+| 03 | 2026-06-07 | Architectural decision: single-agent linear flow | ✅ Adopted | Recipes are written for one agent reading them sequentially; context accumulates. Subagent orchestration is not prescribed. |
+| 04 | 2026-06-07 | Iteration 1: SKILL.md + detect.md, Agent Skills spec | ✅ Shipped | Skill restructured to `llama-wizard/{SKILL.md,references/}`. Iteration 1 ready for real-agent test. |
 
 ---
 
@@ -351,4 +353,141 @@ The hybrid was tested in run 6; the subagent successfully inferred `apt` for `ub
 
 ### 2.6 Next concrete step (session 03 plan)
 
-Clone `llama.cpp` manually into `vendor/llama.cpp`, capture the build output (branch, commit SHA, CMake configuration flags that worked on this host, time to compile, final binary path), and use that as input for `recipes/ubuntu-26.04-wsl2/compile/llama-cpp.md`.
+Clone `llama.cpp` manually into `src/llama.cpp`, capture the build output (branch, commit SHA, CMake configuration flags that worked on this host, time to compile, final binary path), and use that as input for `recipes/ubuntu-26.04-wsl2/compile/llama-cpp.md`. The directory name was renamed from `vendor/` to `src/` (see session 03).
+
+---
+
+## Session 03 — 2026-06-07 — Architectural decision: single-agent linear flow
+
+### 3.1 Decision
+
+**llama-wizard recipes are written for a single agent reading them sequentially.** The agent accumulates context across recipes. The skill does **not** prescribe subagent orchestration.
+
+This decision was taken before the implementation of session 03's concrete work (clone + read docs + write `compile/llama-cpp.md`). It is a load-bearing architectural choice, so it is recorded here as its own session, not buried in a later one.
+
+### 3.2 Why
+
+- **Runtime-agnostic**: a single agent works in Claude Code, Codex, Pi Agent, or executed manually by a human. A model that prescribes "the parent Pi session must hand context to a subagent" silently excludes the other runtimes.
+- **Simpler recipes**: each recipe declares its pre-conditions in a small block; the agent validates them against the context it has already built. No transport, no handoff syntax, no explicit input/output contract.
+- **Simpler debugging**: when something goes wrong, the failure is local to one agent reading one .md. We do not have to reconstruct "what context did the parent pass" or "which subagent failed".
+- **Reflects actual use**: in Claude Code, Codex, or Pi, the user runs one agent and asks it to follow the skill. They do not orchestrate subagents themselves. Writing the skill to match that model is the most natural fit.
+
+### 3.3 What this changes concretely
+
+- **`recipes/detect.md`**: starts cold. The agent knows nothing about the host. Runs the full detection flow (pre-flight + A–I + recipe selection) and produces a verdict + report.
+- **`recipes/ubuntu-26.04-wsl2/compile/llama-cpp.md` (forthcoming)**: starts with a **Pre-conditions** block that lists what the agent must already know from the context (selected recipe folder, GPUs, CUDA toolkit present, nproc, etc.). The recipe aborts with a clear message if any pre-condition is missing. There is no inline mini-detect duplicating detect.md.
+- **Subsequent recipes** (docker, models, compose): same shape. Pre-conditions block + execution. Each one assumes the agent already ran the previous ones.
+- **Our subagent-based unit tests** (how we validate each recipe in isolation): the test prompt embeds a simulated handoff. We pass the subagent the literal output of the previous step (e.g. the `Environment report` block from `detect.md`) plus the recipe under test, and the task is phrased as "you are the agent that has just finished `detect.md`; now execute `compile/llama-cpp.md`." This is not the same as orchestration; it is a one-shot handoff used only for our testing.
+
+### 3.4 Trade-off accepted
+
+A recipe invoked **standalone** (without prior context) will fail with a clear "pre-condition not met" abort. This is accepted as incorrect usage. The skill is meant to be executed top-to-bottom (detect → gate → compile → docker → models → compose). Standalone invocation is out of scope.
+
+We do not add a defensive mini-detect to every recipe to support this out-of-scope use case. YAGNI: if the standalone use ever becomes a real need, the right answer is to extract a `recipes/detect-mini.md` that the caller can opt into, not to bloat every recipe.
+
+### 3.5 Rejected alternatives
+
+- **Mini-detect inline in every recipe** (self-contained, defensive). Rejected because the recipes grow, the duplication has no real benefit when used correctly, and the cost of the double-detect is not justified by the benefit.
+- **Explicit input/output JSON contract between recipes** (runtime-agnostic, but adds ceremony). Rejected because the human/agent-readable prose in each Pre-conditions block is already a contract; an additional JSON layer would only help if a non-LLM caller wanted to consume the skill, and we do not have that requirement.
+- **Subagent orchestration prescribed by the skill** (Pi-friendly). Rejected because it breaks runtime-agnosticism. The user is free to orchestrate in Pi if they want, but the skill does not tell them to.
+- **Hardcoded per-distro install command table** (rejected twice in session 02). Resolved via the hybrid heuristic+fallback in `detect.md`. Carried forward; this decision is independent of the linear-flow one.
+
+### 3.6 Naming consequence
+
+The directory where `llama.cpp` is cloned is now `src/llama.cpp/` (was `vendor/llama.cpp/`). The user rejected `build/` to avoid confusion with `docker build`, and chose `src/` for its brevity and standard convention. The `.gitignore` rule was updated from `vendor/` to `src/llama.cpp/`. This change is part of session 03 setup, not a separate decision.
+
+### 3.7 Concrete next steps (post-decision)
+
+Now that the architecture is fixed, the session 03 concrete work proceeds as planned:
+
+1. Identify the last stable tag of `llama.cpp` (not `master` head) and check it out.
+2. Read `docs/docker.md`, the Build section of `README.md`, and any other relevant doc to extract CMake flags, build steps, and the binary path.
+3. Capture host data (`nvcc --version`, `cmake --version`, `nvidia-smi --query-gpu=compute_cap`, `nproc`) in this session's notes.
+4. Write `recipes/ubuntu-26.04-wsl2/compile/llama-cpp.md` with a Pre-conditions block and exact, unambiguous commands.
+5. Validate the recipe with a subagent test that simulates the detect→compile handoff.
+
+### 3.8 `llama.cpp` version pinning
+
+- Cloned shallow into `src/llama.cpp/` from `https://github.com/ggml-org/llama.cpp.git`.
+- Tags are namespaced `gguf-vX.Y.Z` (not `vX.Y.Z`); the last stable release is `gguf-v0.19.0` (commit `a290ce626663dae1d54f70bce3ca6d8f67aab62f`, dated 2026-05-06).
+- Checked out at that tag, detached HEAD. The pin is recorded in the recipe; subagents must not move it.
+- Future builds must use the same tag, not `master`. The `gguf-vX.Y.Z` namespace is the only release tag scheme; the `master-XXXX` tags are pointers to rolling `master` commits, not releases.
+
+### 3.9 Documentation extract (what we will use)
+
+From `docs/build.md` (CUDA section) and `docs/docker.md`:
+
+- Default CUDA build (covers all archs detected at configure time):
+  ```
+  cmake -B build -DGGML_CUDA=ON
+  cmake --build build --config Release
+  ```
+- Targeted CUDA build (only the compute capabilities we actually have):
+  ```
+  cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="86;89"
+  cmake --build build --config Release
+  ```
+- Binary path after build: `build/bin/llama-server` (and `llama-cli`, `llama-completion`).
+- Pre-built image: `ghcr.io/ggml-org/llama.cpp:server-cuda` ships with CUDA 12.8.1 and all supported architectures. If the official image already covers `sm_120`, the only reason to compile locally is customisation or learning.
+- The official Dockerfile uses `CUDA_VERSION=12.8.1` and `CUDA_DOCKER_ARCH=cmake build default`. sm_120 (Blackwell, RTX 5090) requires CUDA 12.8+; older CUDA toolkits (e.g. 12.4) will fail or warn.
+
+### 3.10 Host data (real environment, captured for the recipe)
+
+```
+nvidia-smi --query-gpu=index,name,driver_version,compute_cap --format=csv
+0, NVIDIA GeForce RTX 5090, 596.36, 12.0
+1, NVIDIA GeForce RTX 4080 SUPER, 596.36, 8.9
+```
+
+- `nvidia-smi` available; `compute_cap` confirms `12.0` (sm_120, Blackwell, RTX 5090) and `8.9` (sm_89, Ada Lovelace, RTX 4080 SUPER).
+- `cmake`: **NOT INSTALLED** (same gap as session 01).
+- `nvcc`: **NOT INSTALLED**. There is a dangling symlink `/usr/local/cuda -> /usr/local/cuda-13.3` but the target does not exist. No `cuda*` package is installed via dpkg. The system has the driver (596.36) but not the CUDA Toolkit.
+- `nproc`: 16.
+- RAM: 46 GiB total, 44 GiB available.
+- Conclusion: building llama.cpp from source on this host currently requires installing the CUDA Toolkit (12.8 or 13.x) **and** `cmake`. The recipe must detect this and abort with a clear message; we will not paper over it.
+
+### 3.11 Implications for the recipe
+
+- `compile/llama-cpp.md` starts with a **Pre-conditions block** that lists what the agent must already know from `detect.md`'s context: selected recipe folder, GPUs (with compute_cap), `nproc`, `cmake` present, `nvcc` present.
+- If `nvcc` is missing → abort with a message that points to the official installer (`.run` from NVIDIA, or distro packages) and reminds the user that the alternative is the pre-built image `ghcr.io/ggml-org/llama.cpp:server-cuda`.
+- The CMake `CMAKE_CUDA_ARCHITECTURES` value is **derived from `nvidia-smi --query-gpu=compute_cap`** at recipe-execution time, not hard-coded. The agent joins the values with `;`.
+- Build parallelism: `cmake --build build --config Release -j$(nproc)`. The `-j` value comes from the captured `nproc`; do not hard-code 8.
+- The recipe is a single linear flow with no subagent fan-out, per the architectural decision in 3.1.
+
+### 3.12 Iteration 1 scope: SKILL.md + detect.md only
+
+After writing `compile/llama-cpp.md` we paused the validation loop because `cmake` and `nvcc` are not installed on this host and `sudo` requires a password the agent cannot supply. Rather than block on a real build, we shipped an iteration 1 with just the entry point and the first recipe:
+
+- A first cut of `SKILL.md` at the repo root: a 1-page runtime-agnostic entry point that tells the agent to load `references/detect.md` and execute it. No orchestration, no fan-out, no subagent prescription.
+- `references/detect.md`: unchanged from session 02 (6 subagent iterations, 18 improvements, hybrid heuristic+fallback).
+- `references/ubuntu-26.04-wsl2/compile/llama-cpp.md`: written but **not yet validated** because the host is missing `cmake` and `nvcc`. The recipe is parked here, awaiting deps and a real end-to-end test.
+
+The point of iteration 1 is to test the entry-point → detect.md loop on a real agent (not a simulated subagent), with a real user behind the keyboard, to see whether the agent actually surfaces the right install commands to the user and whether the report reads naturally. Once that loop is confirmed, we extend with the next recipes and validate compile once the host has the deps.
+
+### 3.13 Why we tested `sudo` and `apt` first
+
+Before deciding to scope down to iteration 1, we confirmed two things:
+
+- `sudo -n apt install -y make cmake jq` → rejected with `sudo: a password is required`. A non-interactive agent cannot install system packages on this host.
+- `apt install -y make cmake jq` (no sudo) → rejected with `Error: Could not open lock file /var/lib/dpkg/lock-frontend ... are you root?`. Running as `jorge`, the user is not root.
+
+The only paths to install the deps are (a) the user runs the command interactively with `sudo`, or (b) reconfigure `/etc/sudoers` to grant NOPASSWD to `jorge`. Both are user decisions, not agent decisions. We did not auto-install.
+
+### 3.14 Restructure to the Agent Skills convention
+
+After drafting iteration 1's SKILL.md as a single root-level file, the user pointed us at the [Agent Skills specification](https://agentskills.io/specification). The skill directory was restructured to match the convention:
+
+- `llama-wizard/SKILL.md` (frontmatter + body)
+- `llama-wizard/references/` (the `recipes/` directory was renamed to `references/`)
+- All internal path references in the recipes updated from `recipes/` to `references/`
+- The repo's `BITACORA.md`, `VISION.md`, and `src/llama.cpp/` stay at the repo root, outside the skill directory (they are dev artifacts, not part of the skill)
+
+Frontmatter contents:
+
+- `name: llama-wizard` (matches the parent directory; lowercase, no leading/trailing hyphens, no `--`)
+- `description`: 483 chars, under the 1024 limit. Describes what the skill does and when to use it; includes trigger keywords.
+- `license: MIT`
+- `compatibility`: 170 chars, under the 500 limit. Linux x86_64, NVIDIA driver 5xx+, CUDA 12.8+ (or pre-built image), Docker with nvidia-container-toolkit.
+- `metadata.version: 0.1.0`, `status: iteration-1`, `runtime-model: single-agent-linear`.
+
+The `skills-ref` CLI is not installed on this host, so validation was done manually against the spec (name length, name format, name/parent match, description length, compatibility length, body structure). The skill passes all manual checks.

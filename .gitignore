@@ -2,4 +2,4 @@
 .atl/
 .pi/
 models/*.gguf
-vendor/
+src/llama.cpp/
