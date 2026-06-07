@@ -3,3 +3,6 @@
 .pi/
 models/*.gguf
 src/llama.cpp/
+
+# Downloaded installers (CUDA .run, etc.)
+*.run

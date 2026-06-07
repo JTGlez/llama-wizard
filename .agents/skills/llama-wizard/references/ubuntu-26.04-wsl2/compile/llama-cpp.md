@@ -35,14 +35,13 @@ These checks are cheap and protect against the host being modified between the `
 command -v cmake >/dev/null 2>&1 && echo "cmake_present=true" || echo "cmake_present=false"
 command -v nvcc >/dev/null 2>&1 && echo "nvcc_present=true" || echo "nvcc_present=false"
 nproc
-nvcc --version | tail -1
 ```
 
 Interpretation rules:
 
 - `cmake_present=false` → abort with: "`cmake` is not installed. Install with the distro's package manager (e.g. `sudo apt install -y cmake`) and re-invoke the skill from the top."
-- `nvcc_present=false` → abort with: "The NVIDIA CUDA Toolkit (`nvcc`) is not installed. This is required to compile `llama.cpp` with CUDA support. Install CUDA 12.8 or newer for the host (the official `.run` installer from NVIDIA is the most reliable path on WSL2; distro packages are often behind). Alternatively, switch to the pre-built image path: re-invoke the skill and choose the Docker image option at the entry-point gate."
-- Capture `nvcc --version` and record the CUDA version in the build report (it determines which `sm_XX` targets are usable).
+- `nvcc_present=false` → abort with: "The NVIDIA CUDA Toolkit (`nvcc`) is not installed. This recipe needs it to build `llama.cpp` with CUDA support. To install, follow the official instructions at https://developer.nvidia.com/cuda-downloads (the page lets you pick your distro and version). The user must run the install manually; re-invoke the skill afterwards. If you do not want to install the toolkit, switch to the pre-built image path: use the official image `ghcr.io/ggml-org/llama.cpp:server-cuda` directly (no local compile needed)."
+- **Once an abort condition is met, stop. Do not run the remaining commands in this block, and do not try `nvcc --version` against a missing `nvcc` — the abort already covers the case.**
 
 ## B. Derive the CUDA architecture list
 
@@ -65,15 +64,15 @@ git fetch --tags --depth 1 origin
 git checkout gguf-v0.19.0
 ```
 
-After the checkout, verify that the working tree matches the pinned commit and abort if it does not:
+After the checkout, verify that the working tree is on the pinned tag and abort if it is not:
 
 ```bash
-EXPECTED_SHA="a290ce626663dae1d54f70bce3ca6d8f67aab62f"
+TAG_REF="$(git rev-parse --verify refs/tags/gguf-v0.19.0 2>/dev/null)"
 ACTUAL_SHA="$(git rev-parse HEAD)"
-[ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || { echo "Expected $EXPECTED_SHA, got $ACTUAL_SHA"; exit 1; }
+[ "$ACTUAL_SHA" = "$TAG_REF" ] || { echo "Expected $TAG_REF (tag gguf-v0.19.0), got $ACTUAL_SHA"; exit 1; }
 ```
 
-The exact commit SHA is what makes the build reproducible. If the pin changes in a future release, update the recipe in the same commit that bumps the version; do not let the two drift.
+The pin is the **tag**, not a hard-coded SHA. The check verifies that the working tree's HEAD is the commit the tag points to. If the project releases `gguf-v0.19.1` later, only the `git checkout` line above needs to change; this check keeps working without any edit.
 
 ## D. Configure with CMake
 
@@ -119,7 +118,14 @@ build/bin/llama-server --version
 build/bin/llama-cli --version
 ```
 
-The `--version` output must show the same `gguf-v0.19.0` version the source tree is pinned to. If the version printed does not match the pin, the build is from the wrong source: abort and re-do steps C and D.
+The `--version` output must show the same `gguf-v0.19.0` version the source tree is pinned to. Extract the version string with:
+
+```bash
+build/bin/llama-server --version 2>&1 | grep -Eo 'gguf-v[0-9]+\.[0-9]+\.[0-9]+' | head -1
+build/bin/llama-cli --version 2>&1 | grep -Eo 'gguf-v[0-9]+\.[0-9]+\.[0-9]+' | head -1
+```
+
+If either binary's `--version` does not print a `gguf-vX.Y.Z` string, or prints a different version than the pinned one, the build is from the wrong source. Abort with: "Binary version does not match the pinned tag `gguf-v0.19.0`. Re-do steps C and D from a clean clone."
 
 ## G. Report to the user
 
@@ -129,7 +135,7 @@ After successful verification, present:
 Compile report
 --------------
 Source tree:    src/llama.cpp/
-Pin:            gguf-v0.19.0 (commit a290ce626663dae1d54f70bce3ca6d8f67aab62f)
+Pin:            gguf-v0.19.0 (commit resolved at build time via `git rev-parse refs/tags/gguf-v0.19.0`)
 CUDA toolkit:   <output of `nvcc --version`>
 CUDA arch list: <value from step B>
 CMake:          <output of `cmake --version` first line>
@@ -138,7 +144,7 @@ Binaries:
   build/bin/llama-cli        <size>   <sha256 prefix>
   build/bin/llama-completion <size>   <sha256 prefix>
 
-Verdict: ready
+Compile verdict: ready
 ```
 
 Generate the size and sha256 lines with:
@@ -148,13 +154,13 @@ ls -l build/bin/llama-server build/bin/llama-cli build/bin/llama-completion | aw
 sha256sum build/bin/llama-server build/bin/llama-cli build/bin/llama-completion | awk '{print $1, $NF}'
 ```
 
-The "Verdict" here is the compile step's verdict, independent of `detect.md`'s verdict. If any verification in steps A–F failed and the recipe aborted, do not print this report.
+The "Compile verdict" here is the compile step's verdict, independent of `detect.md`'s verdict. It means "the binaries exist and were built from the pinned source tree"; it does not mean the server is running or that any model is loaded. If any verification in steps A–F failed and the recipe aborted, do not print this report.
 
 ## What this file does NOT do
 
-- It does not download models. That is the responsibility of `references/ubuntu-26.04-wsl2/models/download.md` (forthcoming).
-- It does not build a Docker image. That is the responsibility of `references/ubuntu-26.04-wsl2/docker/llama-cpp.md` (forthcoming).
-- It does not start the server. That is the responsibility of `references/ubuntu-26.04-wsl2/compose.md` (forthcoming).
+- It does not download models. That is out of scope for this recipe.
+- It does not build a Docker image. That is also out of scope; for the pre-built image path, the user can run `ghcr.io/ggml-org/llama.cpp:server-cuda` directly.
+- It does not start the server. That is out of scope; the binary exists and the user can run it, but a full `docker compose` or systemd setup is not part of this recipe.
 - It does not modify any file outside `src/llama.cpp/`. In particular, it does not install system packages; the user must do that and re-invoke the skill from the top.
 
 ## Inputs this recipe expects from the prior agent context

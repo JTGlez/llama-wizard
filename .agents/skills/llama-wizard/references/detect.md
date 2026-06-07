@@ -160,8 +160,16 @@ If any required tool is missing:
 **Optional tool**:
 - `nvcc` (NVIDIA CUDA Toolkit compiler). Required only for the build-from-source path. **Missing `nvcc` is a warning, not a block.** If `nvcc_present=false`:
   - The verdict is `Verdict: ready` (NOT `ready with warnings` — that verdict is reserved for disk/GPU/recipe-caveat conditions, see the Verdict values section). The only thing that changes is the addition of a `Warnings` block.
-  - Place the `Warnings` section between the report table and the `Selected recipe:` line. The exact text is: "`nvcc` is not installed. This is only required if you plan to compile `llama.cpp` from source. The pre-built image path (`ghcr.io/ggml-org/llama.cpp:server-cuda`) does not need it. The chosen recipe folder (`references/<folder>/`) will handle this on the next step."
-  - If the GPU is NVIDIA and the user picks the build-from-source path later, the compile recipe will abort and ask for the CUDA Toolkit at that point.
+  - Place the `Warnings` section between the report table and the `Selected recipe:` line.
+  - The `Warnings` block must include both the explanation and a hint pointing the user to the official install instructions. The exact text to render is:
+    ```
+    Warnings
+
+    - `nvcc` is not installed. Only required if you compile `llama.cpp` from source; the pre-built image `ghcr.io/ggml-org/llama.cpp:server-cuda` does not need it.
+    - To install the CUDA Toolkit, follow the official instructions at https://developer.nvidia.com/cuda-downloads (the page lets you pick your distro and version). The user must run the install manually; re-invoke the skill afterwards.
+    ```
+  - Do not give distro-specific install commands or .run installer scripts. The official page handles distro/version selection. The user is responsible for picking the right combo.
+  - If the GPU is NVIDIA and the user picks the build-from-source path later, the compile recipe will abort and tell the user the same hint (linking to the same page) so the message is consistent across recipes.
 
 ### I. User in docker group
 
