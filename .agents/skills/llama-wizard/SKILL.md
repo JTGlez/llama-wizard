@@ -1,6 +1,6 @@
 ---
 name: llama-wizard
-description: A runtime-agnostic skill for setting up a local LLM server with llama.cpp on the user's host. Detects the distro and GPU, picks the right recipe, compiles llama.cpp with CUDA support for the detected NVIDIA hardware, downloads a model, and starts an OpenAI-compatible server. Use when the user wants a self-hosted LLM inference server with GPU acceleration on Linux. Triggers on requests like "set up a local LLM", "run llama.cpp", "start a llama server", "I want a local AI server".
+description: A runtime-agnostic skill for setting up a local LLM server with llama.cpp on the user's host. Use when the user wants a self-hosted LLM inference server with GPU acceleration on Linux. Triggers on requests like "set up a local LLM", "run llama.cpp", "start a llama server", "I want a local AI server".
 license: MIT
 compatibility: Linux x86_64 host, NVIDIA GPU with driver 5xx+ and CUDA Toolkit 12.8+ (or use the pre-built image path), Docker with nvidia-container-toolkit installed, 20+ GiB free disk
 metadata:
@@ -15,16 +15,14 @@ A runtime-agnostic skill for setting up a local LLM server with `llama.cpp` on t
 
 ## How this skill works
 
-This skill is designed to be executed by a **single LLM agent** with a `bash` tool. The agent reads each file in turn, runs the bash commands inside, and accumulates context across files. There is no subagent orchestration, no fan-out, no transport between separate invocations. This makes the skill work the same way in Claude Code, Codex, Pi Agent, or any other capable agent.
+This skill is designed to be executed by a **single LLM agent** with a `bash` tool. The agent reads each file in turn, runs the bash commands inside, and accumulates context across files.
 
 The skill directory follows the [Agent Skills](https://agentskills.io/specification) convention:
 
 - `SKILL.md` (this file) — entry point and metadata
 - `references/` — additional markdown files the agent loads on demand, one per step of the flow
 
-## Flow (iteration 1)
-
-Iteration 1 ships only the first recipe. The others are forthcoming. The point of this iteration is to validate the entry-point loop with a real user on a real agent.
+## Flow
 
 1. **Detect environment.** Load and execute `references/detect.md`. It runs a series of bash commands to identify the host's distro, kernel, CPU, RAM, GPUs, Docker, and tools. It produces a verdict and an "Environment report".
 2. **If the verdict is `blocked`** (most commonly: missing build tools or missing Docker GPU runtime), the recipe also produces install commands for the user to run manually. The skill ends here. The user runs the commands, re-invokes the skill, and the cycle repeats.

@@ -18,7 +18,7 @@
 | 01 | 2026-06-07 | Environment detection | ✅ OK | First run on Ubuntu 26.04 WSL2. 2× NVIDIA GPUs detected. |
 | 02 | 2026-06-07 | Subagent test of detect.md (6 iterations) | ✅ Robust | 18 improvements applied, 1 rejection maintained (per-distro table), resolved with a hybrid heuristic+fallback. |
 | 03 | 2026-06-07 | Architectural decision: single-agent linear flow | ✅ Adopted | Recipes are written for one agent reading them sequentially; context accumulates. Subagent orchestration is not prescribed. |
-| 04 | 2026-06-07 | Iteration 1: SKILL.md + detect.md, Agent Skills spec | ✅ Shipped | Skill restructured to `llama-wizard/{SKILL.md,references/}`. Iteration 1 ready for real-agent test. |
+| 04 | 2026-06-07 | Iteration 1: SKILL.md + detect.md, Agent Skills spec | ✅ Shipped | Skill at `.agents/skills/llama-wizard/`. Spec + Pi discovery both satisfied. |
 
 ---
 
@@ -491,3 +491,11 @@ Frontmatter contents:
 - `metadata.version: 0.1.0`, `status: iteration-1`, `runtime-model: single-agent-linear`.
 
 The `skills-ref` CLI is not installed on this host, so validation was done manually against the spec (name length, name format, name/parent match, description length, compatibility length, body structure). The skill passes all manual checks.
+
+### 3.15 Move to `.agents/skills/llama-wizard/` (Pi-compatible discovery)
+
+After seeing the Pi skill-discovery rules (Pi scans `.agents/skills/`, `.pi/skills/`, `~/.pi/agent/skills/`, etc.), the user asked to move the skill to `.agents/skills/llama-wizard/`. This path satisfies both the Agent Skills spec (skill = directory with SKILL.md, name matches the directory) and Pi's auto-discovery (which scans `.agents/skills/`). No symlinks required.
+
+The move was a rename; git preserved history (the old `llama-wizard/` directory and the new `.agents/skills/llama-wizard/` are recognised as the same file content). The first symlink-based attempt (`.agents/skills/llama-wizard -> ../../llama-wizard`) was reverted before this commit. The `.pi/skills/llama-wizard` symlink was also removed.
+
+Final skill location: `.agents/skills/llama-wizard/`. Repo dev artifacts (BITACORA.md, VISION.md, README.md, src/llama.cpp/, .atl/, .pi/) stay at the repo root.
