@@ -114,6 +114,8 @@ If `free_gib < 50` → warn but continue: "Less than 50 GiB free. Small models w
 
 ### H. Build and runtime tools
 
+Split the tool check into two passes: **required** (without which the skill itself cannot run) and **optional** (needed only for the build-from-source path).
+
 ```bash
 for tool in git make cmake gcc g++ curl jq pkg-config; do
   if command -v "$tool" >/dev/null 2>&1; then
@@ -123,18 +125,22 @@ for tool in git make cmake gcc g++ curl jq pkg-config; do
     printf 'tool=%s status=missing\n' "$tool"
   fi
 done
+command -v nvcc >/dev/null 2>&1 && echo "nvcc_present=true" || echo "nvcc_present=false"
 ```
 
-If any of `make`, `cmake`, `gcc`, `g++`, `git`, `curl`, `jq`, `pkg-config` is missing:
+**Required tools** (must be present or the verdict is `blocked`):
+`git`, `make`, `cmake`, `gcc`, `g++`, `curl`, `jq`, `pkg-config`. Their roles:
+- `git` — clone llama.cpp source
+- `make`, `gcc`, `g++` — build llama.cpp (these typically come together in a distro's "build" or "base-devel" group)
+- `cmake` — generate the llama.cpp build files
+- `curl` — download model files
+- `jq` — parse JSON outputs during validation
+- `pkg-config` — locate system libraries for llama.cpp
+
+If any required tool is missing:
 
 - Set the verdict to `blocked`. Do not proceed to the recipe folder load.
-- List the missing tools and their role:
-  - `git` — clone llama.cpp source
-  - `make`, `gcc`, `g++` — build llama.cpp (these typically come together in a distro's "build" or "base-devel" group)
-  - `cmake` — generate the llama.cpp build files
-  - `curl` — download model files
-  - `jq` — parse JSON outputs during validation
-  - `pkg-config` — locate system libraries for llama.cpp
+- List the missing tools and their role from the list above.
 - Infer the install command for the detected distro using this heuristic:
   - `id=ubuntu`, `id=debian`, or `id_like=debian` → `apt`
   - `id=fedora`, `id=rhel`, `id=centos`, or `id_like=rhel` → `dnf`
@@ -144,12 +150,18 @@ If any of `make`, `cmake`, `gcc`, `g++`, `git`, `curl`, `jq`, `pkg-config` is mi
   - Anything else → use the next step (fallback).
 - Fallback: if no heuristic matches, do **not** guess. Abort the verdict with: "Detected distro `<id> <version>` has no install command registered in detect.md. Open a recipe under `references/<id>-<version>/` to add one, or contribute the install command to detect.md's heuristic list." Print the missing tools and the heuristic list so the contributor can copy the format.
 - The user runs the install manually, then re-invokes the skill so this recipe runs again from the top and validates.
-- **Render rule for the `Tools:` row**: render missing tools inline in a single row, e.g. `Tools: git OK, make MISSING, cmake MISSING, gcc OK, g++ OK, curl OK, jq MISSING, pkg-config OK`. Do not split into two rows.
+- **Render rule for the `Tools:` row**: render missing tools inline in a single row, e.g. `Tools: git OK, make MISSING, cmake MISSING, gcc OK, g++ OK, curl OK, jq MISSING, pkg-config OK`. Do not split into two rows. Include the `nvcc` check as an extra note in the row when relevant, e.g. `Tools: ... pkg-config OK  (nvcc: not installed)`.
 - Canonical layout when the verdict is `blocked` due to missing tools (checklist; use this exact order):
   1. The report table (the same `Environment report` block as the other verdicts), including the `Selected recipe:` line.
   2. A "Missing build tools" section, one bullet per missing tool, each with the tool's role from the list above.
   3. The inferred install command in a single bash code block (or, in the fallback case, the "no install command registered" message).
   4. The verdict line.
+
+**Optional tool**:
+- `nvcc` (NVIDIA CUDA Toolkit compiler). Required only for the build-from-source path. **Missing `nvcc` is a warning, not a block.** If `nvcc_present=false`:
+  - The verdict is `Verdict: ready` (NOT `ready with warnings` — that verdict is reserved for disk/GPU/recipe-caveat conditions, see the Verdict values section). The only thing that changes is the addition of a `Warnings` block.
+  - Place the `Warnings` section between the report table and the `Selected recipe:` line. The exact text is: "`nvcc` is not installed. This is only required if you plan to compile `llama.cpp` from source. The pre-built image path (`ghcr.io/ggml-org/llama.cpp:server-cuda`) does not need it. The chosen recipe folder (`references/<folder>/`) will handle this on the next step."
+  - If the GPU is NVIDIA and the user picks the build-from-source path later, the compile recipe will abort and ask for the CUDA Toolkit at that point.
 
 ### I. User in docker group
 

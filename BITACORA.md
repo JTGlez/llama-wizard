@@ -19,6 +19,7 @@
 | 02 | 2026-06-07 | Subagent test of detect.md (6 iterations) | ✅ Robust | 18 improvements applied, 1 rejection maintained (per-distro table), resolved with a hybrid heuristic+fallback. |
 | 03 | 2026-06-07 | Architectural decision: single-agent linear flow | ✅ Adopted | Recipes are written for one agent reading them sequentially; context accumulates. Subagent orchestration is not prescribed. |
 | 04 | 2026-06-07 | Iteration 1: SKILL.md + detect.md, Agent Skills spec | ✅ Shipped | Skill at `.agents/skills/llama-wizard/`. Spec + Pi discovery both satisfied. |
+| 05 | 2026-06-07 | nvcc demoted from required to optional | ✅ Applied | `nvcc` is only required for the build-from-source path; the pre-built image path bypasses it. Missing `nvcc` now produces a warning, not a `blocked` verdict. |
 
 ---
 
@@ -499,3 +500,30 @@ After seeing the Pi skill-discovery rules (Pi scans `.agents/skills/`, `.pi/skil
 The move was a rename; git preserved history (the old `llama-wizard/` directory and the new `.agents/skills/llama-wizard/` are recognised as the same file content). The first symlink-based attempt (`.agents/skills/llama-wizard -> ../../llama-wizard`) was reverted before this commit. The `.pi/skills/llama-wizard` symlink was also removed.
 
 Final skill location: `.agents/skills/llama-wizard/`. Repo dev artifacts (BITACORA.md, VISION.md, README.md, src/llama.cpp/, .atl/, .pi/) stay at the repo root.
+
+### 3.16 Real-agent test of iteration 1
+
+The user loaded the skill in a real agent and ran `references/detect.md`. The agent produced the canonical report without improvisation:
+
+- All 9 detection steps ran in parallel where independent.
+- The `Runtimes:` awk worked on Docker 29.5.2's indented output (`io.containerd.runc.v2 nvidia runc`).
+- The report included `Selected recipe: references/ubuntu-26.04-wsl2/` and the new path format was respected.
+- The user-group render rule (`id -un`) worked: `Docker group: user jorge is in docker group`.
+- The agent inferred `apt` for `id=ubuntu` via the heuristic (no per-distro table) and proposed `sudo apt update && sudo apt install -y make cmake jq` (the three tools the user thought were missing).
+- Verdict: `blocked`. The agent stopped, told the user to run the install, and asked them to re-invoke the skill.
+
+**Important correction**: the user pointed out that `make`, `cmake`, and `jq` are actually installed on this host (we had not noticed — session 01 recorded them as missing, but the user installed them since, or the install was never needed). Only `nvcc` is actually missing.
+
+### 3.17 `nvcc` is optional, not required
+
+Before session 05, `detect.md` treated `nvcc` as a required tool. That was wrong: the next recipe (`compile/llama-cpp.md`) is one of two paths, and the alternative path (pre-built image `ghcr.io/ggml-org/llama.cpp:server-cuda`) does not need `nvcc` on the host. Forcing `nvcc` in `detect.md` would block users who only want the image.
+
+Change: `nvcc` is now an **optional** tool in step H. If it is missing:
+
+- The verdict is `Verdict: ready` (NOT `ready with warnings` — that verdict is reserved for disk/GPU/recipe-caveat conditions).
+- A `Warnings` section is added between the report table and the `Selected recipe:` line.
+- The warning text tells the user that `nvcc` is needed only for the build-from-source path and that the pre-built image path bypasses it.
+
+A subagent test of the new model confirmed the layout: `Verdict: ready`, warnings block, recipe folder, no improvisation. The test also caught a subtle ambiguity (the original wording said "verdict stays `ready` or `ready with warnings`", which conflicted with the verdict values table that excludes missing tools from `ready with warnings`); the wording was tightened to say the verdict is `ready`.
+
+`compile/llama-cpp.md` keeps its `nvcc` abort — that recipe is reached only when the user has chosen the build-from-source path, and on that path `nvcc` is genuinely required.
