@@ -4,5 +4,11 @@
 models/*.gguf
 src/llama.cpp/
 
+# Docker build context (staged binarios + .so from the host build)
+build-context/
+
+# Downloaded installers (CUDA .run, etc.)
+*.run
+
 # Downloaded installers (CUDA .run, etc.)
 *.run
