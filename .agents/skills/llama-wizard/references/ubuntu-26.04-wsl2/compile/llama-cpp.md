@@ -79,10 +79,10 @@ The pin is the **tag**, not a hard-coded SHA. The check uses `^{commit}` to peel
 
 ## D. Configure with CMake
 
-Working directory: `src/llama.cpp/`. The variable `<CUDA_ARCHES>` is the value produced by step B in **integer form** (e.g. `120;89`, not `12.0;8.9`).
+This step's `cmake` invocation must run with `src/llama.cpp/` as the current directory. The agent's `bash` tool typically does not preserve `cwd` between separate calls, so the `cd` must be in the same command line. The variable `<CUDA_ARCHES>` is the value produced by step B in **integer form** (e.g. `120;89`, not `12.0;8.9`).
 
 ```bash
-cmake -B build -S . \
+cd src/llama.cpp && cmake -B build -S . \
   -DGGML_CUDA=ON \
   -DCMAKE_CUDA_ARCHITECTURES="<CUDA_ARCHES>" \
   -DCMAKE_BUILD_TYPE=Release
@@ -92,6 +92,7 @@ The agent must use `-DCMAKE_BUILD_TYPE=Release`. Debug builds produce binaries t
 
 The output of `cmake` configure is verbose. The agent must scan it for any of these failure indicators and abort on any match:
 
+- `source directory` followed by `does not appear to contain CMakeLists.txt` → abort: "The `cd src/llama.cpp` did not take effect (or the directory was renamed). The bash tool may have reset the working directory. Re-run with `cd` in the same command line as `cmake`."
 - `Could NOT find CUDA` → abort: "CMake did not find CUDA. Verify that the toolkit is installed and that `nvcc` is on `PATH`."
 - `CMAKE_CUDA_ARCHITECTURES` followed by `is not one of the following` → abort: "CMake rejected `CMAKE_CUDA_ARCHITECTURES`. The value must be a semicolon-separated list of integers (e.g. `120;89`), not the `X.Y` form from `nvidia-smi`. Re-check step B."
 - `CUDA error` → abort: "CMake configure failed with a CUDA error. Read the lines above for the specific cause."
@@ -101,15 +102,34 @@ If the configure finishes without those errors, capture the line that starts wit
 
 ## E. Build
 
-Working directory: `src/llama.cpp/`. The variable `<N>` is the value of `nproc` captured in step A.
+The variable `<N>` is the value of `nproc` captured in step A. As in step D, the `cd` must be in the same command line because the agent's `bash` tool does not preserve `cwd` between calls.
 
 ```bash
-cmake --build build --config Release -j <N>
+cd src/llama.cpp && cmake --build build --config Release -j <N>
 ```
 
-The `-j <N>` is mandatory. Without it, the build will appear to hang on a many-core machine (the AMD Ryzen 7 7800X3D has 16 threads, and a default serial build of `llama.cpp` with CUDA kernels can take 30+ minutes).
+The `-j <N>` is mandatory. Without it, the build will appear to hang on a many-core machine (the AMD Ryzen 7 7800X3D has 16 threads, and a default serial build of `llama.cpp` with CUDA kernels can take several hours).
 
-The build output is large. The agent must wait for it to finish. If the build exits non-zero, abort with: "Build failed. Read the last 50 lines of output for the failing target and report the error to the user. Do not retry automatically."
+**Expected duration on this hardware**: 60-120 minutes for the first build with `-DGGML_CUDA=ON` and two compute capabilities (e.g. `120;89`). The bottleneck is `nvcc` compiling the `ggml-cuda` source tree, which has hundreds of templated `.cu` files (one per fattn and mmq variant per arch). The `-j 16` parallelism helps with `cc1plus` jobs but `nvcc` jobs serialize around the GPU. Set the bash tool's foreground timeout to at least 3 hours (10_800_000 ms) for this step.
+
+**If the bash tool's timeout is too short for a single foreground call, run the build in the background and monitor it.** This is the documented workaround for long builds, not improvisation:
+
+```bash
+cd src/llama.cpp && nohup cmake --build build --config Release -j <N> > /tmp/llama-build.log 2>&1 &
+echo "BUILD_PID=$!"
+```
+
+Then poll the log and the process list every 60-120 seconds:
+
+```bash
+sleep 90 && tail -3 /tmp/llama-build.log && echo "---" && \
+  ps -ef | grep -E "cmake|cc1plus|nvcc" | grep -v grep | wc -l && echo "active build procs" && \
+  ls src/llama.cpp/build/bin/ 2>/dev/null | wc -l && echo "binaries so far"
+```
+
+The build is complete when `[100%] Built target llama-server` (or equivalent) appears in the log, AND the process list shows no active `nvcc`/`cc1plus`/`cmake` processes, AND `ls src/llama.cpp/build/bin/` shows the three expected binaries (`llama-server`, `llama-cli`, `llama-completion`).
+
+The build output is large (10+ MB of compile logs). The agent must wait for it to finish. If the build exits non-zero, abort with: "Build failed. Read the last 50 lines of output for the failing target and report the error to the user. Do not retry automatically."
 
 ## F. Verify the binaries
 

@@ -38,7 +38,7 @@ The skill directory follows the [Agent Skills](https://agentskills.io/specificat
    The agent must present this gate to the user and wait for an explicit choice. Do not auto-pick. Do not silently switch paths. The user picked the path at the entry point; this gate is the same decision re-stated now that the verdict is known.
 
 4. **Load the chosen recipe.** Execute it step by step. Each recipe ends with a "report" block (compile: "Compile report", docker: "Docker report") and its own verdict. If the recipe aborts, the skill ends here; the user fixes the host and re-invokes the skill from the top.
-5. **(forthcoming) Download a model.** Load and execute `references/<selected-folder>/models/download.md` to fetch a GGUF into the local `models/` directory.
+5. **(forthcoming) Download a model.** Load and execute `references/<selected-folder>/models/download.md` to fetch a GGUF into the local `models/` directory. As this step is still not implemented, end the skill flow here for now.
 6. **(forthcoming) Run the server.** Load and execute `references/<selected-folder>/compose.md` to start the server with a smoke test.
 
 ## What this skill does not do
