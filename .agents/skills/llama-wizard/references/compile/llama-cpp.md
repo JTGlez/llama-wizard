@@ -11,8 +11,6 @@ The agent must have already executed `references/detect.md` and accumulated the 
 | Field | Expected value | Source |
 | --- | --- | --- |
 | Selected flujo | `references/compile/llama-cpp.md` | `detect.md` step "Flujo selection" |
-| `distro_id` | `ubuntu` | `detect.md` step A |
-| `distro_version` | `26.04` | `detect.md` step A |
 | `gpu_vendor` | `nvidia` (or any non-empty value) | `detect.md` step E |
 | `gpus[]` | one entry per NVIDIA device, each with `index`, `name`, `compute_cap`, `memory.total` | `detect.md` step E |
 | `nvidia_runtime_registered` | `true` | `detect.md` step F |
@@ -20,6 +18,8 @@ The agent must have already executed `references/detect.md` and accumulated the 
 | `nvcc_present` | `true` | **this flujo** (re-checked) |
 | `cmake_present` | `true` | **this flujo** (re-checked) |
 | `nproc` | integer | **this flujo** (re-checked) |
+
+The host's Linux distribution is not a precondition. The flow assumes Linux (gated by `detect.md`); the specific distro is irrelevant because the commands in this file (git, cmake, nvcc, docker, ldconfig) are present on every Linux distro with the prerequisites installed. If the user wants to add a distro-specific step, do it in `detect.md`'s heuristic list, not here.
 
 This flujo does **not** re-run `detect.md`. It assumes the previous run already produced the data. If the agent is invoked fresh (no `detect.md` context), abort with: "This flujo expects a prior `references/detect.md` run. Re-invoke the skill from the top."
 
@@ -39,7 +39,7 @@ nproc
 
 Interpretation rules:
 
-- `cmake_present=false` → abort with: "`cmake` is not installed. Install with the distro's package manager (e.g. `sudo apt install -y cmake`) and re-invoke the skill from the top."
+- `cmake_present=false` → abort with: "`cmake` is not installed. Install it with the host's package manager (the same one `detect.md` already probed; see its heuristic list) and re-invoke the skill from the top."
 - `nvcc_present=false` → abort with: "The NVIDIA CUDA Toolkit (`nvcc`) is not installed. This flujo needs it to build `llama.cpp` with CUDA support. To install, follow the official instructions at https://developer.nvidia.com/cuda-downloads (the page lets you pick your distro and version). The user must run the install manually; re-invoke the skill afterwards. If you do not want to install the toolkit, switch to the pre-built image path: use the official image `ghcr.io/ggml-org/llama.cpp:server-cuda` directly (no local compile needed)."
 - **Once an abort condition is met, stop. Do not run the remaining commands in this block, and do not try `nvcc --version` against a missing `nvcc` — the abort already covers the case.**
 
@@ -108,7 +108,7 @@ The variable `<N>` is the value of `nproc` captured in step A. As in step D, the
 cd src/llama.cpp && cmake --build build --config Release -j <N>
 ```
 
-The `-j <N>` is mandatory. Without it, the build will appear to hang on a many-core machine (the AMD Ryzen 7 7800X3D has 16 threads, and a default serial build of `llama.cpp` with CUDA kernels can take several hours).
+The `-j <N>` is mandatory. Without it, the build will appear to hang on any machine with more than one CPU core, and a default serial build of `llama.cpp` with CUDA kernels can take several hours.
 
 **Expected duration on this hardware**: 60-120 minutes for the first build with `-DGGML_CUDA=ON` and two compute capabilities (e.g. `120;89`). The bottleneck is `nvcc` compiling the `ggml-cuda` source tree, which has hundreds of templated `.cu` files (one per fattn and mmq variant per arch). The `-j 16` parallelism helps with `cc1plus` jobs but `nvcc` jobs serialize around the GPU. Set the bash tool's foreground timeout to at least 3 hours (10_800_000 ms) for this step.
 
@@ -133,7 +133,10 @@ The build output is large (10+ MB of compile logs). The agent must wait for it t
 
 ## F. Verify the binaries
 
+The `cd` must be in the same command line because the agent's `bash` tool does not preserve `cwd` between calls. The pin check uses `cd` rather than `git -C src/llama.cpp` to avoid the path-doubling bug that occurs when `cwd` is already inside `src/llama.cpp/`.
+
 ```bash
+cd src/llama.cpp
 test -x build/bin/llama-server   || { echo "missing: build/bin/llama-server"; exit 1; }
 test -x build/bin/llama-cli      || { echo "missing: build/bin/llama-cli"; exit 1; }
 test -x build/bin/llama-completion || { echo "missing: build/bin/llama-completion"; exit 1; }
@@ -145,7 +148,7 @@ build/bin/llama-cli --version
 The `--version` output does NOT print a `gguf-vX.Y.Z` string; it prints `version: 1 (<short commit SHA>)`. Verify the build is from the pinned source by comparing the printed short SHA against the tag's peeled commit:
 
 ```bash
-TAG_SHA="$(git -C src/llama.cpp rev-parse --short 'refs/tags/gguf-v0.19.0^{commit}')"
+TAG_SHA="$(git rev-parse --short 'refs/tags/gguf-v0.19.0^{commit}')"
 SERVER_SHA="$(build/bin/llama-server --version 2>&1 | grep -Eo '\([0-9a-f]+\)' | tr -d '()' | head -1)"
 CLI_SHA="$(build/bin/llama-cli --version 2>&1 | grep -Eo '\([0-9a-f]+\)' | tr -d '()' | head -1)"
 [ "$SERVER_SHA" = "$TAG_SHA" ] || { echo "llama-server commit $SERVER_SHA does not match tag gguf-v0.19.0 ($TAG_SHA)"; exit 1; }
