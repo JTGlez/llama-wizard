@@ -2,11 +2,11 @@
 
 ## Goal
 
-Detect the host environment, gate the skill on a verdict (ready / ready with warnings / blocked), and present a structured report to the user before any install or compile step. The detected distro is reported but does not select a flujo folder; flujos under `references/` are distro-agnostic.
+Detect the host environment, gate the skill on a verdict (ready / ready with warnings / blocked), and present a structured report to the user before any install or compile step. The detected distro is reported but does not select a flow folder; flows under `references/` are distro-agnostic.
 
 ## Scope
 
-This file is distro-agnostic. It runs first, before any flujo is loaded. There are no per-distro instruction folders; all flujos under `references/` are distro-agnostic.
+This file is distro-agnostic. It runs first, before any flow is loaded. There are no per-distro instruction folders; all flows under `references/` are distro-agnostic.
 
 ## Pre-flight (abort on failure)
 
@@ -24,7 +24,7 @@ Expected: `Linux`. Anything else → abort with: "llama-wizard requires Linux. D
 uname -m
 ```
 
-Expected: `x86_64`. Other values → abort with: "Recipe is for x86_64 only. Detected: <arch>."
+Expected: `x86_64`. Other values → abort with: "llama-wizard is for x86_64 only. Detected: <arch>."
 
 ## Detection steps
 
@@ -139,7 +139,7 @@ command -v nvcc >/dev/null 2>&1 && echo "nvcc_present=true" || echo "nvcc_presen
 
 If any required tool is missing:
 
-- Set the verdict to `blocked`. Do not proceed to the flujo load.
+- Set the verdict to `blocked`. Do not proceed to the flow load.
 - List the missing tools and their role from the list above.
 - Infer the install command for the detected distro using this heuristic:
   - `id=ubuntu`, `id=debian`, or `id_like=debian` → `apt`
@@ -149,7 +149,7 @@ If any required tool is missing:
   - `id=opensuse*` → `zypper`
   - Anything else → use the next step (fallback).
 - Fallback: if no heuristic matches, do **not** guess. Abort the verdict with: "Detected distro `<id> <version>` has no install command registered in detect.md. Contribute the install command to detect.md's heuristic list." Print the missing tools and the heuristic list so the contributor can copy the format.
-- The user runs the install manually, then re-invokes the skill so this flujo runs again from the top and validates.
+- The user runs the install manually, then re-invokes the skill so this flow runs again from the top and validates.
 - **Render rule for the `Tools:` row**: render missing tools inline in a single row, e.g. `Tools: git OK, make MISSING, cmake MISSING, gcc OK, g++ OK, curl OK, jq MISSING, pkg-config OK`. Do not split into two rows. Include the `nvcc` check as an extra note in the row when relevant, e.g. `Tools: ... pkg-config OK  (nvcc: not installed)`.
 - Canonical layout when the verdict is `blocked` due to missing tools (checklist; use this exact order):
   1. The report table (the same `Environment report` block as the other verdicts), including the `Selected flow:` line.
@@ -169,7 +169,7 @@ If any required tool is missing:
     - To install the CUDA Toolkit, follow the official instructions at https://developer.nvidia.com/cuda-downloads (the page lets you pick your distro and version). The user must run the install manually; re-invoke the skill afterwards.
     ```
   - Do not give distro-specific install commands or .run installer scripts. The official page handles distro/version selection. The user is responsible for picking the right combo.
-  - If the GPU is NVIDIA and the user picks the build-from-source path later, the compile flujo will abort and tell the user the same hint (linking to the same page) so the message is consistent across flujos.
+  - If the GPU is NVIDIA and the user picks the build-from-source path later, the compile flow will abort and tell the user the same hint (linking to the same page) so the message is consistent across flows.
 
 ### I. User in docker group
 
@@ -189,9 +189,9 @@ Note: `newgrp docker` only affects the current shell session. After the user re-
 
 In the report, render the row as `Docker group: user <CURRENT_USER> is in docker group` (or `is not in docker group` if absent). Always derive the label from `id -un`; do not copy the example literally.
 
-## Recipe selection
+## Flow selection
 
-Flujos under `references/` are distro-agnostic: their commands do not change with the host's distro. The only step that ever needed distro-specific knowledge was this detection step (which is now done). The skill therefore does not select a "flujo folder"; the next step (driven by the skill entry point) loads the path-gate flujos (`compile/`, `compose`, `models/`) directly.
+Flows under `references/` are distro-agnostic: their commands do not change with the host's distro. The only step that ever needed distro-specific knowledge was this detection step (which is now done). The skill therefore does not select a "flow folder"; the next step (driven by the skill entry point) loads the path-gate flows (`compile/`, `compose`, `models/`) directly.
 
 The role of the detection result is to **report** what was found (distro, kernel, WSL flag, GPUs, tools) and to **gate** the next step on the verdict. The verdict is computed in the next section.
 
@@ -229,7 +229,7 @@ Verdict values:
   Do not use this verdict for missing tools, missing runtimes, or pre-flight failures.
 - `Verdict: blocked` — something required is missing or broken. Three cases:
   - **Pre-flight or infrastructure failure** (not Linux, not x86_64, no Docker, no GPU runtime): the user must fix the system before re-running. Print the report table first, then the abort message, then the verdict.
-  - **Missing build tools** (step H): the user must install the listed tools, then re-invoke the skill. Print the report table first (including the `Selected flow:` line, so the user knows which flujo will be loaded after fixing tools), then a "Missing build tools" section listing each missing tool and its role, then the inferred install command in a bash block, then the verdict. This is the canonical layout for this case.
+  - **Missing build tools** (step H): the user must install the listed tools, then re-invoke the skill. Print the report table first (including the `Selected flow:` line, so the user knows which flow will be loaded after fixing tools), then a "Missing build tools" section listing each missing tool and its role, then the inferred install command in a bash block, then the verdict. This is the canonical layout for this case.
 - Do not use any other verdict.
 
 This mirrors the "missing build tools" case where the report is printed first and the install command is shown after.
@@ -239,5 +239,5 @@ This mirrors the "missing build tools" case where the report is printed first an
 - It does not install anything.
 - It does not modify the filesystem.
 - It does not write any state file.
-- It does not load any flujo. The next step (driven by the skill entry point) is responsible for loading the path-gate flujos directly from `references/compile/`, `references/compose.md`, `references/models/`, etc.
+- It does not load any flow. The next step (driven by the skill entry point) is responsible for loading the path-gate flows directly from `references/compile/`, `references/compose.md`, `references/models/`, etc.
 - It does not download models or clone repos.
