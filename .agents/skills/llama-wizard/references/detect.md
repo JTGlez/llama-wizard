@@ -125,6 +125,14 @@ for tool in git make cmake gcc g++ curl jq pkg-config; do
     printf 'tool=%s status=missing\n' "$tool"
   fi
 done
+for tool in wget; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    v=$("$tool" --version 2>/dev/null | head -n 1)
+    printf 'tool=%s status=ok version="%s"\n' "$tool" "$v"
+  else
+    printf 'tool=%s status=missing\n' "$tool"
+  fi
+done
 command -v nvcc >/dev/null 2>&1 && echo "nvcc_present=true" || echo "nvcc_present=false"
 ```
 
@@ -133,7 +141,7 @@ command -v nvcc >/dev/null 2>&1 && echo "nvcc_present=true" || echo "nvcc_presen
 - `git` — clone llama.cpp source
 - `make`, `gcc`, `g++` — build llama.cpp (these typically come together in a distro's "build" or "base-devel" group)
 - `cmake` — generate the llama.cpp build files
-- `curl` — download model files
+- `curl` — fallback download tool if `wget` is missing
 - `jq` — parse JSON outputs during validation
 - `pkg-config` — locate system libraries for llama.cpp
 
@@ -150,14 +158,15 @@ If any required tool is missing:
   - Anything else → use the next step (fallback).
 - Fallback: if no heuristic matches, do **not** guess. Abort the verdict with: "Detected distro `<id> <version>` has no install command registered in detect.md. Contribute the install command to detect.md's heuristic list." Print the missing tools and the heuristic list so the contributor can copy the format.
 - The user runs the install manually, then re-invokes the skill so this flow runs again from the top and validates.
-- **Render rule for the `Tools:` row**: render missing tools inline in a single row, e.g. `Tools: git OK, make MISSING, cmake MISSING, gcc OK, g++ OK, curl OK, jq MISSING, pkg-config OK`. Do not split into two rows. Include the `nvcc` check as an extra note in the row when relevant, e.g. `Tools: ... pkg-config OK  (nvcc: not installed)`.
+- **Render rule for the `Tools:` row**: render missing tools inline in a single row, e.g. `Tools: git OK, make MISSING, cmake MISSING, gcc OK, g++ OK, curl OK, jq MISSING, pkg-config OK`. Do not split into two rows. Include the `nvcc` check as an extra note in the row when relevant, e.g. `Tools: ... pkg-config OK  (nvcc: not installed)`. If `wget` is missing, append `wget MISSING` to the same row, e.g. `Tools: ... pkg-config OK, wget MISSING  (nvcc: not installed)`.
 - Canonical layout when the verdict is `blocked` due to missing tools (checklist; use this exact order):
   1. The report table (the same `Environment report` block as the other verdicts), including the `Selected flow:` line.
   2. A "Missing build tools" section, one bullet per missing tool, each with the tool's role from the list above.
   3. The inferred install command in a single bash code block (or, in the fallback case, the "no install command registered" message).
   4. The verdict line.
 
-**Optional tool**:
+**Optional tools** (missing is a warning, not a block):
+- `wget` — preferred download tool for model files. The `references/models/download.md` flow uses it. If `wget` is missing, the download flow falls back to `curl -L -O` (which is in the required list). A missing `wget` is reported in the `Tools:` row and a hint is added to the `Warnings` block, but the verdict stays `ready`.
 - `nvcc` (NVIDIA CUDA Toolkit compiler). Required only for the build-from-source path. **Missing `nvcc` is a warning, not a block.** If `nvcc_present=false`:
   - The verdict is `Verdict: ready` (NOT `ready with warnings` — that verdict is reserved for disk/GPU conditions, see the Verdict values section). The only thing that changes is the addition of a `Warnings` block.
   - Place the `Warnings` section between the report table and the `Selected flow:` line.
@@ -170,6 +179,10 @@ If any required tool is missing:
     ```
   - Do not give distro-specific install commands or .run installer scripts. The official page handles distro/version selection. The user is responsible for picking the right combo.
   - If the GPU is NVIDIA and the user picks the build-from-source path later, the compile flow will abort and tell the user the same hint (linking to the same page) so the message is consistent across flows.
+  - If `wget` is missing, append a third bullet to the `Warnings` block:
+    ```
+    - `wget` is not installed. The model download flow (`references/models/download.md`) prefers `wget`; it will fall back to `curl -L -O` if `wget` is absent, so this is not blocking. To install it, use your distro's package manager (e.g. `apt install wget`, `dnf install wget`, `pacman -S wget`).
+    ```
 
 ### I. User in docker group
 

@@ -1,0 +1,41 @@
+# docker-compose.example.yml — tracked template
+#
+# Copy this file to `docker-compose.yml` (which is gitignored) and edit
+# the `<MODEL_FILE>` placeholder with the actual filename of your GGUF
+# inside the `./models` directory.
+#
+#   cp docker-compose.example.yml docker-compose.yml
+#   $EDITOR docker-compose.yml
+#
+# The compose file lives at the repo root so the `./models` volume mount
+# resolves to `<repo>/models/`, which is where `references/models/download.md`
+# places downloaded models.
+
+services:
+  llm-server:
+    container_name: llm-server
+    # Image produced by `references/compile/llama-cpp.md`. If you took the
+    # pre-built path, replace with `ghcr.io/ggml-org/llama.cpp:server-cuda`.
+    image: llama-wizard-llama-cpp:gguf-v0.19.0
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      - ./models:/models:ro
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    env_file:
+      - ./.env
+    command:
+      - "--model"
+      - "/models/<MODEL_FILE>"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+    restart: unless-stopped

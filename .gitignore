@@ -1,14 +1,20 @@
 # Local Pi runtime state
 .atl/
 .pi/
+
+# Downloaded models
 models/*.gguf
+models/*/*.gguf
+
+# llama.cpp source tree (cloned by references/compile/llama-cpp.md)
 src/llama.cpp/
 
-# Docker build context (staged binarios + .so from the host build)
+# Docker build context (staged binaries + .so from the host build)
 build-context/
 
 # Downloaded installers (CUDA .run, etc.)
 *.run
 
-# Downloaded installers (CUDA .run, etc.)
-*.run
+# User-local copy of the compose template and env file
+docker-compose.yml
+.env
