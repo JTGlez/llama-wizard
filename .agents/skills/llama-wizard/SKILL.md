@@ -4,11 +4,10 @@ description: A runtime-agnostic skill for setting up a local LLM server with lla
 license: MIT
 compatibility: Linux x86_64 host, NVIDIA GPU with driver 5xx+ and CUDA Toolkit 12.8+ (or use the pre-built image path), Docker with nvidia-container-toolkit installed, 20+ GiB free disk
 metadata:
-  version: 0.3.0
-  status: iteration-3
+  version: 0.4.0
+  status: iteration-4
   runtime-model: single-agent-linear
-  validated-flows: detect, compile/llama-cpp
-  forthcoming-flows: compose, models/download
+  validated-flows: detect, compile/llama-cpp, models/download, compose
   flow-layout: flat (flows are distro-agnostic; no per-distro folders)
 ---
 
@@ -29,12 +28,12 @@ The skill directory follows the [Agent Skills](https://agentskills.io/specificat
 
 1. **Detect environment.** Load and execute `references/detect.md`. It runs a series of bash commands to identify the host's distro, kernel, CPU, RAM, GPUs, Docker, and tools. It produces a verdict and an "Environment report".
 2. **If the verdict is `blocked`** (most commonly: missing build tools or missing Docker GPU runtime), the flow produces install commands for the user to run manually. The skill ends here. The user runs the commands, re-invokes the skill, and the cycle repeats.
-3. **If the verdict is `ready` or `ready with warnings`**, present a **path gate** to the user. Both paths converge on `references/compose.md` (forthcoming), which is where the server actually runs. The gate is a choice of *how* the image the server runs on was built:
+3. **If the verdict is `ready` or `ready with warnings`**, present a **path gate** to the user. Both paths converge on `references/compose.md`, which is where the server actually runs. The gate is a choice of *how* the image the server runs on was built:
 
    | Path | What runs the server | Where the image comes from | Prerequisites |
    | --- | --- | --- | --- |
-   | **compile** (Recommended when you want to tune build flags) | `references/compose.md` (forthcoming), using a custom image | `references/compile/llama-cpp.md` builds a custom Docker image with llama.cpp compiled from source at the pinned tag, with the host's CUDA archs. | `cmake` and `nvcc` (CUDA Toolkit) on `PATH`. The flow re-validates both and aborts with a distro-neutral link if either is missing. |
-   | **pre-built** (Recommended when you just want a server) | `references/compose.md` (forthcoming), using the official image | The compose file pulls `ghcr.io/ggml-org/llama.cpp:server-cuda` directly. No host-side compile. | Docker with nvidia runtime (already validated in step 1). |
+   | **compile** (Recommended when you want to tune build flags) | `references/compose.md`, using a custom image | `references/compile/llama-cpp.md` builds a custom Docker image with llama.cpp compiled from source at the pinned tag, with the host's CUDA archs. | `cmake` and `nvcc` (CUDA Toolkit) on `PATH`. The flow re-validates both and aborts with a distro-neutral link if either is missing. |
+   | **pre-built** (Recommended when you just want a server) | `references/compose.md`, using the official image | The compose file pulls `ghcr.io/ggml-org/llama.cpp:server-cuda` directly. No host-side compile. | Docker with nvidia runtime (already validated in step 1). |
 
    The agent must present this gate to the user and wait for an explicit choice. Do not auto-pick. Do not silently switch paths. The user picked the path at the entry point; this gate is the same decision re-stated now that the verdict is known.
 
@@ -42,8 +41,9 @@ The skill directory follows the [Agent Skills](https://agentskills.io/specificat
 
 4. **Execute the chosen path.** The `compile` path goes to `references/compile/llama-cpp.md` and produces a custom image. The `pre-built` path skips straight to `references/compose.md`. Both end at compose.
 
-5. **(forthcoming) Download a model.** Load and execute `references/models/download.md` to fetch a GGUF into the local `models/` directory. As this step is still not implemented, end the skill flow here for now.
-6. **(forthcoming) Run the server.** Load and execute `references/compose.md` to start the server with a smoke test. This is the terminal step of the flow; the server stays up until the user stops it.
+5. **Download a model (optional).** Load and execute `references/models/download.md` to fetch a GGUF into the local `models/` directory. The user is asked whether to download and which quantization to use; the default recommendation is `Q4_K_M` for `Jackrong/Qwopus3.6-27B-v2-MTP-GGUF`. If the user skips, `references/compose.md` will leave a `<MODEL_FILE>` placeholder in `docker-compose.yml` for the user to fill in.
+
+6. **Run the server.** Load and execute `references/compose.md` to start the server with a smoke test. This is the terminal step of the flow: the compose file is generated from the tracked `docker-compose.example.yml` template, the container is brought up, `/health`, `/v1/models`, and a real `POST /v1/chat/completions` are all validated. The server stays up until the user stops it.
 
 ## What this skill does not do
 
