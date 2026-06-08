@@ -2,11 +2,11 @@
 
 ## Goal
 
-Detect the host environment, gate the skill on a verdict (ready / ready with warnings / blocked), and present a structured report to the user before any install or compile step. The detected distro is reported but does not select a recipe folder; recipes under `references/` are distro-agnostic.
+Detect the host environment, gate the skill on a verdict (ready / ready with warnings / blocked), and present a structured report to the user before any install or compile step. The detected distro is reported but does not select a flujo folder; flujos under `references/` are distro-agnostic.
 
 ## Scope
 
-This file is distro-agnostic. It runs first, before any distro-specific recipe is loaded. Distro-specific instructions live under `references/<DISTRO>/`.
+This file is distro-agnostic. It runs first, before any flujo is loaded. There are no per-distro instruction folders; all flujos under `references/` are distro-agnostic.
 
 ## Pre-flight (abort on failure)
 
@@ -139,7 +139,7 @@ command -v nvcc >/dev/null 2>&1 && echo "nvcc_present=true" || echo "nvcc_presen
 
 If any required tool is missing:
 
-- Set the verdict to `blocked`. Do not proceed to the recipe folder load.
+- Set the verdict to `blocked`. Do not proceed to the flujo load.
 - List the missing tools and their role from the list above.
 - Infer the install command for the detected distro using this heuristic:
   - `id=ubuntu`, `id=debian`, or `id_like=debian` → `apt`
@@ -148,19 +148,19 @@ If any required tool is missing:
   - `id=alpine` → `apk`
   - `id=opensuse*` → `zypper`
   - Anything else → use the next step (fallback).
-- Fallback: if no heuristic matches, do **not** guess. Abort the verdict with: "Detected distro `<id> <version>` has no install command registered in detect.md. Open a recipe under `references/<id>-<version>/` to add one, or contribute the install command to detect.md's heuristic list." Print the missing tools and the heuristic list so the contributor can copy the format.
-- The user runs the install manually, then re-invokes the skill so this recipe runs again from the top and validates.
+- Fallback: if no heuristic matches, do **not** guess. Abort the verdict with: "Detected distro `<id> <version>` has no install command registered in detect.md. Contribute the install command to detect.md's heuristic list." Print the missing tools and the heuristic list so the contributor can copy the format.
+- The user runs the install manually, then re-invokes the skill so this flujo runs again from the top and validates.
 - **Render rule for the `Tools:` row**: render missing tools inline in a single row, e.g. `Tools: git OK, make MISSING, cmake MISSING, gcc OK, g++ OK, curl OK, jq MISSING, pkg-config OK`. Do not split into two rows. Include the `nvcc` check as an extra note in the row when relevant, e.g. `Tools: ... pkg-config OK  (nvcc: not installed)`.
 - Canonical layout when the verdict is `blocked` due to missing tools (checklist; use this exact order):
-  1. The report table (the same `Environment report` block as the other verdicts), including the `Selected recipe:` line.
+  1. The report table (the same `Environment report` block as the other verdicts), including the `Selected flow:` line.
   2. A "Missing build tools" section, one bullet per missing tool, each with the tool's role from the list above.
   3. The inferred install command in a single bash code block (or, in the fallback case, the "no install command registered" message).
   4. The verdict line.
 
 **Optional tool**:
 - `nvcc` (NVIDIA CUDA Toolkit compiler). Required only for the build-from-source path. **Missing `nvcc` is a warning, not a block.** If `nvcc_present=false`:
-  - The verdict is `Verdict: ready` (NOT `ready with warnings` — that verdict is reserved for disk/GPU/recipe-caveat conditions, see the Verdict values section). The only thing that changes is the addition of a `Warnings` block.
-  - Place the `Warnings` section between the report table and the `Selected recipe:` line.
+  - The verdict is `Verdict: ready` (NOT `ready with warnings` — that verdict is reserved for disk/GPU conditions, see the Verdict values section). The only thing that changes is the addition of a `Warnings` block.
+  - Place the `Warnings` section between the report table and the `Selected flow:` line.
   - The `Warnings` block must include both the explanation and a hint pointing the user to the official install instructions. The exact text to render is:
     ```
     Warnings
@@ -169,7 +169,7 @@ If any required tool is missing:
     - To install the CUDA Toolkit, follow the official instructions at https://developer.nvidia.com/cuda-downloads (the page lets you pick your distro and version). The user must run the install manually; re-invoke the skill afterwards.
     ```
   - Do not give distro-specific install commands or .run installer scripts. The official page handles distro/version selection. The user is responsible for picking the right combo.
-  - If the GPU is NVIDIA and the user picks the build-from-source path later, the compile recipe will abort and tell the user the same hint (linking to the same page) so the message is consistent across recipes.
+  - If the GPU is NVIDIA and the user picks the build-from-source path later, the compile flujo will abort and tell the user the same hint (linking to the same page) so the message is consistent across flujos.
 
 ### I. User in docker group
 
@@ -191,13 +191,13 @@ In the report, render the row as `Docker group: user <CURRENT_USER> is in docker
 
 ## Recipe selection
 
-Recipes under `references/` are distro-agnostic: their commands do not change with the host's distro. The only step that ever needed distro-specific knowledge was this detection step (which is now done). The skill therefore does not select a "recipe folder"; the next step (driven by the skill entry point) loads the path-gate recipes (`compile/`, `docker/`, `models/`, `compose`) directly.
+Flujos under `references/` are distro-agnostic: their commands do not change with the host's distro. The only step that ever needed distro-specific knowledge was this detection step (which is now done). The skill therefore does not select a "flujo folder"; the next step (driven by the skill entry point) loads the path-gate flujos (`compile/`, `compose`, `models/`) directly.
 
 The role of the detection result is to **report** what was found (distro, kernel, WSL flag, GPUs, tools) and to **gate** the next step on the verdict. The verdict is computed in the next section.
 
 ## Report to the user
 
-Present one table, then the selected recipe, then a verdict. Example shape:
+Present one table, then the selected flow, then a verdict. Example shape:
 
 ```
 Environment report
@@ -214,31 +214,30 @@ Disk free:        952 GiB
 Tools:            git OK, make OK, cmake OK, gcc OK, g++ OK, curl OK, jq OK, pkg-config OK
 Docker group:     user jorge is in docker group
 
-Selected recipe:  references/compile/llama-cpp.md   (and references/docker/llama-cpp.md, forthcoming)
+Selected flow:  references/compile/llama-cpp.md   (and references/compose.md, forthcoming)
 
 Verdict: ready
 ```
 
 Verdict values:
 
-- `Verdict: ready` — all checks passed (including all tools from step H) and a recipe folder was selected. Continue to the next step (load the selected recipe folder or whatever the skill entry point says is next).
+- `Verdict: ready` — all checks passed (including all tools from step H). Continue to the next step (load the path gate or whatever the skill entry point says is next).
 - `Verdict: ready with warnings` — proceed but call out the warnings above the table. Use this verdict only when **all** of these hold:
   - All pre-flight checks passed.
   - All tools from step H are present.
-  - One or more of these non-blocking conditions is true: (a) `20 <= free_gib < 50`, (b) `gpu_vendor=none`, (c) the matched recipe row has a documented caveat.
+  - One or more of these non-blocking conditions is true: (a) `20 <= free_gib < 50`, (b) `gpu_vendor=none`.
   Do not use this verdict for missing tools, missing runtimes, or pre-flight failures.
 - `Verdict: blocked` — something required is missing or broken. Three cases:
   - **Pre-flight or infrastructure failure** (not Linux, not x86_64, no Docker, no GPU runtime): the user must fix the system before re-running. Print the report table first, then the abort message, then the verdict.
-  - **Missing build tools** (step H): the user must install the listed tools, then re-invoke the skill. Print the report table first (including the `Selected recipe:` line, so the user knows which folder will be loaded after fixing tools), then a "Missing build tools" section listing each missing tool and its role, then the inferred install command in a bash block, then the verdict. This is the canonical layout for this case.
-  - **No recipe for the detected distro** (recipe-selection table miss): the user must either contribute a recipe or run on a supported distro. Print the report table first, then the abort message ("No recipe for <id> <version>..."), then the verdict.
+  - **Missing build tools** (step H): the user must install the listed tools, then re-invoke the skill. Print the report table first (including the `Selected flow:` line, so the user knows which flujo will be loaded after fixing tools), then a "Missing build tools" section listing each missing tool and its role, then the inferred install command in a bash block, then the verdict. This is the canonical layout for this case.
 - Do not use any other verdict.
 
-In the "no recipe" case, the report table is printed first so the user can see what was detected, then the abort message explains the missing recipe. This mirrors the "missing build tools" case where the report is printed first and the install command is shown after.
+This mirrors the "missing build tools" case where the report is printed first and the install command is shown after.
 
 ## What this file does NOT do
 
 - It does not install anything.
 - It does not modify the filesystem.
 - It does not write any state file.
-- It does not load any recipe. The next step (driven by the skill entry point) is responsible for loading the path-gate recipes directly from `references/compile/`, `references/docker/`, etc.
+- It does not load any flujo. The next step (driven by the skill entry point) is responsible for loading the path-gate flujos directly from `references/compile/`, `references/compose.md`, `references/models/`, etc.
 - It does not download models or clone repos.
