@@ -1,4 +1,4 @@
-# Compile llama.cpp from source (Ubuntu 26.04 WSL2, NVIDIA CUDA)
+# Compile llama.cpp from source
 
 ## Goal
 
@@ -10,22 +10,22 @@ The agent must have already executed `references/detect.md` and accumulated the 
 
 | Field | Expected value | Source |
 | --- | --- | --- |
-| Selected recipe folder | `references/ubuntu-26.04-wsl2/` | `detect.md` step "Recipe selection" |
+| Selected flujo | `references/compile/llama-cpp.md` | `detect.md` step "Flujo selection" |
 | `distro_id` | `ubuntu` | `detect.md` step A |
 | `distro_version` | `26.04` | `detect.md` step A |
 | `gpu_vendor` | `nvidia` (or any non-empty value) | `detect.md` step E |
 | `gpus[]` | one entry per NVIDIA device, each with `index`, `name`, `compute_cap`, `memory.total` | `detect.md` step E |
 | `nvidia_runtime_registered` | `true` | `detect.md` step F |
 | `verdict` | `ready` or `ready with warnings` | `detect.md` |
-| `nvcc_present` | `true` | **this recipe** (re-checked) |
-| `cmake_present` | `true` | **this recipe** (re-checked) |
-| `nproc` | integer | **this recipe** (re-checked) |
+| `nvcc_present` | `true` | **this flujo** (re-checked) |
+| `cmake_present` | `true` | **this flujo** (re-checked) |
+| `nproc` | integer | **this flujo** (re-checked) |
 
-This recipe does **not** re-run `detect.md`. It assumes the previous run already produced the data. If the agent is invoked fresh (no `detect.md` context), abort with: "This recipe expects a prior `references/detect.md` run. Re-invoke the skill from the top."
+This flujo does **not** re-run `detect.md`. It assumes the previous run already produced the data. If the agent is invoked fresh (no `detect.md` context), abort with: "This flujo expects a prior `references/detect.md` run. Re-invoke the skill from the top."
 
 ## Why build from source
 
-The user already chose the "build from source" path during the entry-point gate. The pre-built image `ghcr.io/ggml-org/llama.cpp:server-cuda` is the alternative and is documented in `references/ubuntu-26.04-wsl2/docker/llama-cpp.md` (forthcoming). Do not switch paths silently.
+The user already chose the "build from source" path during the entry-point gate. The pre-built image `ghcr.io/ggml-org/llama.cpp:server-cuda` is the alternative and is documented in `references/compose.md` (forthcoming, inline section). Do not switch paths silently.
 
 ## A. Re-validate the build prerequisites
 
@@ -40,7 +40,7 @@ nproc
 Interpretation rules:
 
 - `cmake_present=false` → abort with: "`cmake` is not installed. Install with the distro's package manager (e.g. `sudo apt install -y cmake`) and re-invoke the skill from the top."
-- `nvcc_present=false` → abort with: "The NVIDIA CUDA Toolkit (`nvcc`) is not installed. This recipe needs it to build `llama.cpp` with CUDA support. To install, follow the official instructions at https://developer.nvidia.com/cuda-downloads (the page lets you pick your distro and version). The user must run the install manually; re-invoke the skill afterwards. If you do not want to install the toolkit, switch to the pre-built image path: use the official image `ghcr.io/ggml-org/llama.cpp:server-cuda` directly (no local compile needed)."
+- `nvcc_present=false` → abort with: "The NVIDIA CUDA Toolkit (`nvcc`) is not installed. This flujo needs it to build `llama.cpp` with CUDA support. To install, follow the official instructions at https://developer.nvidia.com/cuda-downloads (the page lets you pick your distro and version). The user must run the install manually; re-invoke the skill afterwards. If you do not want to install the toolkit, switch to the pre-built image path: use the official image `ghcr.io/ggml-org/llama.cpp:server-cuda` directly (no local compile needed)."
 - **Once an abort condition is met, stop. Do not run the remaining commands in this block, and do not try `nvcc --version` against a missing `nvcc` — the abort already covers the case.**
 
 ## B. Derive the CUDA architecture list
@@ -154,7 +154,53 @@ CLI_SHA="$(build/bin/llama-cli --version 2>&1 | grep -Eo '\([0-9a-f]+\)' | tr -d
 
 If either binary's printed short SHA does not match the pinned tag's peeled commit, the build is from the wrong source. Abort with: "Binary commit does not match the pinned tag `gguf-v0.19.0` ($TAG_SHA). Re-do steps C and D from a clean clone."
 
-## G. Report to the user
+## G. Stage the build context
+
+The Docker image reuses the host build, not a fresh in-container build. Copy the validated binaries (and the `.so` files they link against) into a clean directory that will serve as the `docker build` context.
+
+```bash
+rm -rf build-context && mkdir -p build-context/bin
+cp src/llama.cpp/build/bin/llama-server      build-context/bin/
+cp src/llama.cpp/build/bin/llama-cli         build-context/bin/
+cp src/llama.cpp/build/bin/llama-completion  build-context/bin/
+cp src/llama.cpp/build/bin/libggml-*.so*     build-context/bin/
+```
+
+After the copy, verify that the three expected files are present and the `libggml-cuda.so` is in the context:
+
+```bash
+ls build-context/bin/llama-server build-context/bin/llama-cli build-context/bin/llama-completion
+ls build-context/bin/libggml-cuda.so*
+```
+
+If any are missing, abort with: "Build context is incomplete; the host build at `src/llama.cpp/build/bin/` is missing one of the expected files. Re-run steps A–F."
+
+## H. Build the Docker image
+
+The `Dockerfile` for this flujo lives at `references/compile/Dockerfile` (sibling to this file). The agent must pass the resolved path of the Dockerfile and the staged build context to `docker build`. The image is tagged `llama-wizard-llama-cpp:gguf-v0.19.0` so the tag encodes the source pin.
+
+```bash
+docker build \
+  -f references/compile/Dockerfile \
+  -t llama-wizard-llama-cpp:gguf-v0.19.0 \
+  build-context
+```
+
+The build is fast (under 60 seconds): the heavy `cmake` build already happened on the host, the Dockerfile only copies artifacts into a runtime image.
+
+## I. Verify the image
+
+Run a smoke test that the image can be started, the binary inside it reports the pinned commit, and it exits cleanly. We do not start a real inference server in this step (no model loaded); that belongs to `references/compose.md`. The smoke test is just `docker run --rm --gpus all <image> --version`.
+
+```bash
+docker run --rm --gpus all llama-wizard-llama-cpp:gguf-v0.19.0 --version
+```
+
+The output must print `version: 1 (a290ce626)` (the short SHA matching `git -C src/llama.cpp rev-parse --short refs/tags/gguf-v0.19.0^{commit}`). If the binary inside the image reports a different commit, the Dockerfile is not the one expected; abort with: "Image-binary commit does not match the pinned source. Check that `references/compile/Dockerfile` matches the binarios in `build-context/bin/` and rebuild."
+
+If the command exits non-zero (e.g. `docker: error: ... no CUDA devices visible`), the nvidia runtime is not seeing the GPUs inside the container. Re-check step F of `detect.md` (the nvidia runtime registration check) and abort with: "`docker run --gpus all` failed; the nvidia container runtime is not exposing the GPUs to containers. Re-run detect.md and validate step F."
+
+## J. Report to the user
 
 After successful verification, present:
 
@@ -166,37 +212,38 @@ Pin:            gguf-v0.19.0 (commit resolved at build time via `git rev-parse r
 CUDA toolkit:   Cuda compilation tools, release <major>.<minor>, V<release>   (first line of `nvcc --version`)
 CUDA arch list: <value from step B, in integer form>
 CMake:          <output of `cmake --version | head -1`>   (e.g. `cmake version 4.2.3`)
-Binaries:
-  build/bin/llama-server     <size>   <sha256 prefix>
-  build/bin/llama-cli        <size>   <sha256 prefix>
-  build/bin/llama-completion <size>   <sha256 prefix>
+Host binarios:
+  src/llama.cpp/build/bin/llama-server     <size>   <sha256 prefix>
+  src/llama.cpp/build/bin/llama-cli        <size>   <sha256 prefix>
+  src/llama.cpp/build/bin/llama-completion <size>   <sha256 prefix>
+Docker image:   llama-wizard-llama-cpp:gguf-v0.19.0
+Image id:       <output of `docker images --no-trunc --quiet llama-wizard-llama-cpp:gguf-v0.19.0` (first 12 chars)>
+Image size:     <output of `docker images llama-wizard-llama-cpp:gguf-v0.19.0 --format "{{.Size}}"`>
+Smoke test:     `docker run --rm --gpus all llama-wizard-llama-cpp:gguf-v0.19.0 --version` → `version: 1 (a290ce626)`
 
 Compile verdict: ready
 ```
 
-Generate the size and sha256 lines with:
+The size and sha256 lines come from the same generators as the previous step:
 
 ```bash
-ls -l build/bin/llama-server build/bin/llama-cli build/bin/llama-completion | awk '{print $5, $NF}'
-sha256sum build/bin/llama-server build/bin/llama-cli build/bin/llama-completion | awk '{print $1, $NF}'
+ls -l src/llama.cpp/build/bin/llama-server src/llama.cpp/build/bin/llama-cli src/llama.cpp/build/bin/llama-completion | awk '{print $5, $NF}'
+sha256sum src/llama.cpp/build/bin/llama-server src/llama.cpp/build/bin/llama-cli src/llama.cpp/build/bin/llama-completion | awk '{print $1, $NF}'
 ```
 
-The `nvcc --version` output has multiple lines (header, copyright, build date, version, build path). Capture only the line that contains the version string (it starts with `Cuda compilation tools, release ...`). The full multi-line output is not part of the report — it goes in the build log if the user wants to inspect it.
-
-The "Compile verdict" here is the compile step's verdict, independent of `detect.md`'s verdict. It means "the binaries exist and were built from the pinned source tree"; it does not mean the server is running or that any model is loaded. If any verification in steps A–F failed and the recipe aborted, do not print this report.
+The "Compile verdict" here is the compile step's verdict, independent of `detect.md`'s verdict. It means "the binarios exist, were built from the pinned source tree, and were packaged into a Docker image that the runtime can use." It does **not** mean the server is running or that any model is loaded. If any verification in steps A–I failed and the flujo aborted, do not print this report.
 
 ## What this file does NOT do
 
-- It does not download models. That is out of scope for this recipe.
-- It does not build a Docker image. That is also out of scope; for the pre-built image path, the user can run `ghcr.io/ggml-org/llama.cpp:server-cuda` directly.
-- It does not start the server. That is out of scope; the binary exists and the user can run it, but a full `docker compose` or systemd setup is not part of this recipe.
-- It does not modify any file outside `src/llama.cpp/`. In particular, it does not install system packages; the user must do that and re-invoke the skill from the top.
+- It does not download models. That is out of scope for this flujo.
+- It does not start the server with a real model loaded. The image is built and verified to boot (`--version`), but starting the server with a GGUF model and a real inference workload is the responsibility of `references/compose.md` (forthcoming).
+- It does not modify any file outside `src/llama.cpp/`, `build-context/`, and the resulting Docker image. In particular, it does not install system packages; the user must do that and re-invoke the skill from the top.
 
-## Inputs this recipe expects from the prior agent context
+## Inputs this flujo expects from the prior agent context
 
 Re-stated for clarity so the subagent (or the human running the skill) can sanity-check before executing:
 
-1. The selected recipe folder from `detect.md` (must be `references/ubuntu-26.04-wsl2/`).
+1. The selected flujo from `detect.md` (must be `references/compile/llama-cpp.md`).
 2. The list of NVIDIA GPUs with their `compute_cap` values.
 3. The `nproc` value.
 4. The presence of `nvcc` and `cmake` on `PATH`.
