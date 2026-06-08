@@ -64,17 +64,17 @@ grep -q -- "<MODEL_FILE>" docker-compose.yml && \
 docker compose up -d
 ```
 
-Wait for `/health` to return OK. Poll every 5 seconds, timeout 90 seconds.
+Wait for `/health` to return OK. Poll every 5 seconds, timeout 300 seconds. The first start has to load the GGUF into VRAM and initialise CUDA, which can take a couple of minutes on a cold cache.
 
 ```bash
-for i in $(seq 1 18); do
+for i in $(seq 1 60); do
   if curl -sf http://localhost:8080/health >/dev/null; then
     echo "healthy after ${i} polls"
     break
   fi
   sleep 5
 done
-curl -sf http://localhost:8080/health || { echo "Server not healthy after 90s"; docker compose logs --tail=50; exit 1; }
+curl -sf http://localhost:8080/health || { echo "Server not healthy after 300s"; docker compose logs --tail=50; exit 1; }
 ```
 
 The expected body is `{"status":"ok"}` (curl swallows it; that's fine — the exit code is what matters).
@@ -87,19 +87,26 @@ curl -sf http://localhost:8080/v1/models | jq .
 
 The response must include the loaded model id and `format: "gguf"`. If the response is empty or the model id is not in the list, the `--model` argument was wrong: abort, show the compose file's `command:` section, and tell the user to fix it.
 
+Capture the loaded model id for the chat completion in step F:
+
+```bash
+MODEL_ID=$(curl -sf http://localhost:8080/v1/models | jq -r '.data[0].id')
+echo "Loaded model id: ${MODEL_ID}"
+```
+
 ## F. Send a chat completion
 
-Use a small prompt that exercises the chat template. The exact wording is not important; the goal is to confirm that token generation works end-to-end.
+Use a small prompt that exercises the chat template. The exact wording is not important; the goal is to confirm that token generation works end-to-end. The `model` field uses the id captured in step E; the literal string `"default"` is **not** a valid id when the server has loaded a specific GGUF.
 
 ```bash
 curl -sf -X POST http://localhost:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{
-    "model": "default",
-    "messages": [{"role": "user", "content": "Reply with the single word: ready"}],
-    "max_tokens": 16,
-    "temperature": 0
-  }' | jq .
+  -d "{
+    \"model\": \"${MODEL_ID}\",
+    \"messages\": [{\"role\": \"user\", \"content\": \"Reply with the single word: ready\"}],
+    \"max_tokens\": 16,
+    \"temperature\": 0
+  }" | jq .
 ```
 
 Two things must be true:

@@ -227,7 +227,7 @@ Disk free:        952 GiB
 Tools:            git OK, make OK, cmake OK, gcc OK, g++ OK, curl OK, jq OK, pkg-config OK
 Docker group:     user jorge is in docker group
 
-Selected flow:  references/compile/llama-cpp.md   (and references/compose.md, forthcoming)
+Selected flow:  references/compile/llama-cpp.md, references/compose.md, references/models/download.md
 
 Verdict: ready
 ```

@@ -176,6 +176,12 @@ If any are missing, abort: "Build context is incomplete; the host build at `src/
 
 The Dockerfile lives at `references/compile/Dockerfile` (sibling to this file). The image tag encodes the source pin.
 
+If an image with the target tag already exists locally, remove it first. `docker build` does not overwrite a tag — it silently re-tags the existing image, leaving any old content in place. Removing first guarantees the new image reflects the host's current build.
+
+```bash
+docker rmi -f llama-wizard-llama-cpp:gguf-v0.19.0 2>/dev/null || true
+```
+
 `docker build -f` resolves the path against the build context, not the cwd, so a relative path fails with `lstat references: no such file or directory`. Use an absolute path:
 
 ```bash
@@ -234,6 +240,6 @@ The "Compile verdict" here is the compile step's verdict, independent of `detect
 
 ## What this file does NOT do
 
-- It does not download models. (See `references/models/` — forthcoming.)
-- It does not start the server with a real model loaded. That is `references/compose.md` (forthcoming).
+- It does not download models. See `references/models/download.md`.
+- It does not start the server with a real model loaded. That is `references/compose.md`.
 - It does not install system packages. The user must do that and re-invoke the skill from the top.
