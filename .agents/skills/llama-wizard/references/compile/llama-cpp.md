@@ -176,9 +176,11 @@ If any are missing, abort: "Build context is incomplete; the host build at `src/
 
 The Dockerfile lives at `references/compile/Dockerfile` (sibling to this file). The image tag encodes the source pin.
 
+`docker build -f` resolves the path against the build context, not the cwd, so a relative path fails with `lstat references: no such file or directory`. Use an absolute path:
+
 ```bash
 docker build \
-  -f references/compile/Dockerfile \
+  -f "$(pwd)/references/compile/Dockerfile" \
   -t llama-wizard-llama-cpp:gguf-v0.19.0 \
   build-context
 ```
@@ -206,7 +208,7 @@ Compile report
 --------------
 Source tree:    src/llama.cpp/
 Pin:            gguf-v0.19.0 (commit resolved at build time via `git rev-parse refs/tags/gguf-v0.19.0^{commit}`)
-CUDA toolkit:   Cuda compilation tools, release <major>.<minor>, V<release>   (first line of `nvcc --version`)
+CUDA toolkit:   Cuda compilation tools, release <major>.<minor>, V<release>   (line of `nvcc --version` that contains "release")
 CUDA arch list: <value from step B, in integer form>
 CMake:          <output of `cmake --version | head -1`>   (e.g. `cmake version 4.2.3`)
 Host binaries:
