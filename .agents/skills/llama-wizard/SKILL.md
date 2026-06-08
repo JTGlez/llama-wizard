@@ -4,9 +4,11 @@ description: A runtime-agnostic skill for setting up a local LLM server with lla
 license: MIT
 compatibility: Linux x86_64 host, NVIDIA GPU with driver 5xx+ and CUDA Toolkit 12.8+ (or use the pre-built image path), Docker with nvidia-container-toolkit installed, 20+ GiB free disk
 metadata:
-  version: 0.1.0
-  status: iteration-1
+  version: 0.2.0
+  status: iteration-2
   runtime-model: single-agent-linear
+  validated-recipes: detect, compile/llama-cpp
+  forthcoming-recipes: docker/llama-cpp, models/download, compose
 ---
 
 # llama-wizard
@@ -26,7 +28,18 @@ The skill directory follows the [Agent Skills](https://agentskills.io/specificat
 
 1. **Detect environment.** Load and execute `references/detect.md`. It runs a series of bash commands to identify the host's distro, kernel, CPU, RAM, GPUs, Docker, and tools. It produces a verdict and an "Environment report".
 2. **If the verdict is `blocked`** (most commonly: missing build tools or missing Docker GPU runtime), the recipe also produces install commands for the user to run manually. The skill ends here. The user runs the commands, re-invokes the skill, and the cycle repeats.
-3. **If the verdict is `ready` or `ready with warnings`**, the agent stops and tells the user which recipe folder was selected. The next recipes (compile, docker, models, compose) are not yet implemented in this iteration.
+3. **If the verdict is `ready` or `ready with warnings`**, present a **path gate** to the user. There are two ways to get the llama.cpp server running on the selected distro:
+
+   | Path | Recipe | What it does | Prerequisites |
+   | --- | --- | --- | --- |
+   | **docker** (Recommended when `nvcc` is missing) | `references/<selected-folder>/docker/llama-cpp.md` (forthcoming) | Run the official pre-built image `ghcr.io/ggml-org/llama.cpp:server-cuda` with the nvidia runtime. No host-side compile. | Docker with nvidia runtime (already validated in step 1). |
+   | **compile** | `references/<selected-folder>/compile/llama-cpp.md` | Clone `llama.cpp` at the pinned tag, build with CMake + CUDA, produce host-local binaries. | `cmake` and `nvcc` (CUDA Toolkit) on `PATH`. The recipe re-validates both and aborts with a distro-neutral link if either is missing. |
+
+   The agent must present this gate to the user and wait for an explicit choice. Do not auto-pick. Do not silently switch paths. The user picked the path at the entry point; this gate is the same decision re-stated now that the verdict is known.
+
+4. **Load the chosen recipe.** Execute it step by step. Each recipe ends with a "report" block (compile: "Compile report", docker: "Docker report") and its own verdict. If the recipe aborts, the skill ends here; the user fixes the host and re-invokes the skill from the top.
+5. **(forthcoming) Download a model.** Load and execute `references/<selected-folder>/models/download.md` to fetch a GGUF into the local `models/` directory.
+6. **(forthcoming) Run the server.** Load and execute `references/<selected-folder>/compose.md` to start the server with a smoke test.
 
 ## What this skill does not do
 
