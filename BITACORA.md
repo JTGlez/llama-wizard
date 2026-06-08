@@ -527,3 +527,105 @@ Change: `nvcc` is now an **optional** tool in step H. If it is missing:
 A subagent test of the new model confirmed the layout: `Verdict: ready`, warnings block, recipe folder, no improvisation. The test also caught a subtle ambiguity (the original wording said "verdict stays `ready` or `ready with warnings`", which conflicted with the verdict values table that excludes missing tools from `ready with warnings`); the wording was tightened to say the verdict is `ready`.
 
 `compile/llama-cpp.md` keeps its `nvcc` abort — that recipe is reached only when the user has chosen the build-from-source path, and on that path `nvcc` is genuinely required.
+
+### 3.18 `compile/llama-cpp.md` becomes image-aware (Dockerfile + steps A-J)
+
+After iteration 1, `compile/llama-cpp.md` produced host binaries. The `pre-built` path (ghcr.io/ggml-org/llama.cpp:server-cuda) produced a Docker image. The two paths converged only at `references/compose.md` (forthcoming). The compile path's output (host binaries) had no clear destiny in the meantime.
+
+The user asked: instead of producing host binaries, have the compile path produce a Docker image, just like the pre-built path does. The architectural fix: the compile flow does the heavy work (compiling llama.cpp with CUDA) on the host, but then stages the resulting binaries into a `build-context/` directory and builds a Docker image that the runtime can use. This way both paths produce a Docker image and `compose.md` only deals with images.
+
+This required two new artifacts:
+
+- `references/compile/Dockerfile` (sibling to `llama-cpp.md`): single-stage image based on `nvidia/cuda:13.3.0-runtime-ubuntu26.04`, installs `libgomp1` and `curl`, copies the 3 binaries plus all `*.so*` (3 families: libggml, libllama, libmtmd) into `/app/`, sets `ENV LLAMA_ARG_HOST=0.0.0.0`, no `LD_LIBRARY_PATH` (nvidia runtime + ldconfig already handle libcuda.so.1).
+- New steps G (stage build-context), H (build the image), I (smoke test the image), J (report) in `llama-cpp.md`.
+
+### 3.19 `nvidia/cuda:13.3.0-runtime-ubuntu26.04` is available on Docker Hub
+
+The user's environment is `ubuntu-26.04` (resolute). Initial concern: does the `nvidia/cuda:13.3.0-runtime-ubuntu26.04` base image exist on Docker Hub? A `docker pull` confirmed it does (1718 MB, last updated 2026-06-03). The previous concern in an old `Dockerfile.custom` (kept in `src/llama.cpp/.devops/`) is obsolete.
+
+### 3.20 `libgomp1` and the `*.so*` family bug
+
+Two real bugs were found by spinning up the image:
+
+1. `llama-server` is dynamically linked against `libgomp.so.1` (ggml-cpu uses OpenMP for parallel inference on the CPU). The `nvidia/cuda:13.3.0-runtime-ubuntu26.04` image does not have `libgomp1` installed by default. First container run failed with: `error while loading shared libraries: libgomp.so.1: cannot open shared object file`. Fix: add `libgomp1` to the `apt-get install` line. Verified `libgomp1` is in NVIDIA's APT repo (transitive dependency of CUDA packages), so no Ubuntu sources needed.
+
+2. `llama-server` has DT_NEEDED entries for `libllama.so.0`, `libllama-common.so.0`, `libmtmd.so.0`, and `libggml-base.so.0` (NOT `libggml-cuda.so.0` — backends are statically linked because `GGML_BACKEND_DL=OFF` in llama.cpp's build). The first version of the Dockerfile's `COPY` only copied `bin/libggml-*.so*`. The container then failed with `libllama-common.so.0: cannot open shared object file`. Fix: change to `COPY bin/*.so*` (matches llama.cpp's official `cuda.Dockerfile` approach).
+
+The "three families of .so" insight was the real bug; `libgomp1` was the simpler one. Both are now annotated in the Dockerfile with one-line comments so future regressions can be avoided.
+
+### 3.21 End-to-end smoke test with `Qwopus3.6-27B-v2-Q6_K`
+
+A real model was downloaded (22.08 GB Q6_K quantization, chosen for fitting in 32 GB RTX 5090 with 11 GB margin for context). Smoke test:
+
+```
+$ docker run --rm --gpus all llama-wizard-llama-cpp:gguf-v0.19.0 --version
+ggml_cuda_init: found 2 CUDA devices (Total VRAM: 48982 MiB):
+  Device 0: NVIDIA GeForce RTX 5090, compute capability 12.0, VMM: yes, VRAM: 32606 MiB
+  Device 1: NVIDIA GeForce RTX 4080 SUPER, compute capability 8.9, VMM: yes, VRAM: 16375 MiB
+version: 1 (a290ce626)
+built with GNU 15.2.0 for Linux x86_64
+```
+
+The `--version` flag calls `ggml_cuda_init` to enumerate visible devices even though it does not load a model, so this is a stronger test than it looks: it validates the binary, the nvidia runtime wiring, and the CUDA library version compatibility in one shot.
+
+A full E2E test was then run (script at `/tmp/test-e2e.sh`, not committed): start the container with a model mounted, poll `/health` (7s), GET `/v1/models` (lists the model with `format: "gguf"`), POST `/v1/chat/completions` (HTTP 200, 132 tok/s prompt eval, 37.5 tok/s generation). The model returned an empty `content` field but the inference loop was healthy; the empty response is a property of the "Qwopus" model variant (`qwen35` architecture with `thinking = 1` mode and `peg-native` chat format), not of the setup.
+
+GPU usage during inference confirmed both GPUs were active (RTX 5090: 48 % util, 15825 MiB used; RTX 4080 SUPER: 48 % util, 8060 MiB used; KV cache split ~2:1 by memory).
+
+### 3.22 Dockerfile: 116 → 41 lines
+
+The original `Dockerfile` had 116 lines; only ~40 were code. The rest was a multi-block comment header explaining the dynamic linker resolution order, the contents of the nvidia/cuda base image, and the rationale for each instruction. After two passes of trim:
+
+- 1st pass (116 → 57 lines): dropped the dynamic-linker tutorial, the "All three executables" comment, the "All shared libraries" comment, the EXPOSE / ENTRYPOINT explanations, the `610.47` host-driver example, and the "Image build wall time is dominated by apt-get update" prose. Kept the seven non-obvious decisions: reuses host build, runtime-vs-devel rationale, libgomp1, curl, LLAMA_ARG_HOST, *.so* wildcard, no LD_LIBRARY_PATH.
+- 2nd pass (57 → 41 lines): dropped redundant prose inside each of the seven comments. Examples: "The base image already carries libcudart.so.13, libcublas.so.13, libcublasLt.so.13, and the rest of the CUDA runtime libraries under /usr/local/cuda/lib64/" (the agent can `find` to verify), "because ggml-cpu uses OpenMP" (OpenMP is general knowledge), "The DT_RUNPATH embedded in the host-built binary points at the host build directory and is a no-op inside the container" (the no-op is the entire point).
+
+The agent reading the file should not need a dynamic-linker tutorial or a catalog of what the base image contains. The remaining 41 lines are: code (12 lines, ~30 %) and 6 comment blocks (29 lines, ~70 %), each explaining exactly one non-obvious decision in 1-2 lines.
+
+Verified: rebuild 0.1s, smoke test still reports 2 CUDA devices and the pinned commit `a290ce626`.
+
+### 3.23 `compile/llama-cpp.md` F-J and "What this file does NOT do"
+
+Same pass: read the flow from F onward and identify prose that the agent can infer or that duplicates the Dockerfile. Concretely:
+
+- F: drop the 4-line "cd is in a separate block" tutorial. Drop the redundant SHA check on `llama-cli` (same build, same HEAD, same SHA as `llama-server`). Compact the `^{commit}` peel explanation to a parenthetical.
+- G: drop the 3-line explanation of what `*.so*` copies — the Dockerfile's `COPY bin/*.so*` comment already covers that. Drop `libggml-cuda.so.0` from the verification list (it is not a NEEDED entry; `GGML_BACKEND_DL=OFF` makes backends static). Consolidate the `ls` into one command.
+- H: drop the 2-line "this step does not recompile llama.cpp" — the Dockerfile's header already says it.
+- I: drop the 4-line "expected output" template (the agent sees the output when it runs the command). Drop the SHA check on the image (F already validated the host binary, Dockerfile only does COPY, so the SHA is the same by construction). Move the "loading a real model is compose.md's job" sentence to "What this file does NOT do" where it belongs. Reformat the 3 failure cases as a bullet list.
+- J: compact the 3-line "Compile verdict means..." to a one-line parenthetical.
+- "What this file does NOT do": split the third bullet into two sentences (one idea each).
+
+255 → 237 lines (-7 %). The flow from F is now declarative, does not auto-repeat the Dockerfile, and each step has at most one non-obvious decision explained in 1-2 lines.
+
+### 3.24 Final commit log (22 commits ahead of origin/main)
+
+```
+ee88947 refactor(compile): trim F-J and NOT do; remove prose and duplication
+508f41a refactor(compile): compact Dockerfile comments further
+87cb684 refactor(compile): drop tutorial comments from Dockerfile
+db80b69 fix(detect): drop 'flujo' and 'Recipe' spanglish leftovers
+1e277ff fix(compile): step I smoke test now validates CUDA init
+38d1217 fix(compile): step G stage copies all .so*, not just libggml-*
+0c68e31 fix(compile): Dockerfile loads CUDA + all .so + libgomp1
+480eabc refactor(compile): align to detect.md style, drop host-specific assumptions
+c3f76d6 fix(compile): drop remaining 'flujo' and 'binarios' spanglish
+a30ba30 fix(compile): drop distro-specific assumptions, cwd-aware pin check
+8974c49 fix
+f56ffda refactor: replace 'recipe' with 'flujo', clarify compile+pre-built converge in compose
+66e8132 refactor: flatten recipe layout, drop per-distro folders
+50eebc5 fix(compile): cwd in step D, expected duration + nohup workaround in step E
+8604593 feat(SKILL): add explicit compile-vs-docker path gate after detect.md
+f6aa7a9 fix: clarify CMake line in compile report template
+4591cac fix: 4 real bugs in compile/llama-cpp.md found by end-to-end subagent test
+4e2e71c fix: refine compile/llama-cpp.md and detect.md based on subagent tests
+b3abeb2 fix: nvcc is optional, not required, in detect.md
+81cbb6f chore: move skill to .agents/skills/llama-wizard/ for Pi auto-discovery
+b7164f8 feat: iteration 1 of llama-wizard, restructured to Agent Skills spec
+73c1ca5 chore: initial skill scaffold with detect recipe
+518f079 Initial commit
+```
+
+### 3.25 Outstanding work
+
+- `references/compose.md` (forthcoming): destination of both compile and pre-built paths. Defines the compose service, healthcheck, and how the user picks a model.
+- `references/models/` (forthcoming): model catalog + download flow.
+- Consider validating the pre-built path (`ghcr.io/ggml-org/llama.cpp:server-cuda`) end-to-end so the simpler path is also confirmed working.
