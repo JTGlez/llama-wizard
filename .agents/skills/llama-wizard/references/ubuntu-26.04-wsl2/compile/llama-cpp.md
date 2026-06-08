@@ -46,10 +46,13 @@ Interpretation rules:
 ## B. Derive the CUDA architecture list
 
 ```bash
-nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits | awk '!seen[$0]++' | paste -sd ';'
+nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits \
+  | awk -F. '{printf "%d%d\n", $1, $2}' \
+  | awk '!seen[$0]++' \
+  | paste -sd ';'
 ```
 
-This produces a deduplicated, semicolon-separated list of the compute capabilities present in the host (e.g. `12.0;8.9`). The output is the value of `CMAKE_CUDA_ARCHITECTURES`. The agent must capture it and pass it verbatim to `cmake` in step D. Do not invent values; do not hard-code.
+This produces a deduplicated, semicolon-separated list of compute capabilities in the **integer form** CMake requires (e.g. `120;89`, not `12.0;8.9`). The output is the value of `CMAKE_CUDA_ARCHITECTURES`. The agent must capture it and pass it verbatim to `cmake` in step D. Do not invent values; do not hard-code; do not keep the `X.Y` form from `nvidia-smi` — CMake will reject it.
 
 If the output is empty (no `nvidia-smi` rows), abort with: "No NVIDIA GPUs reported by `nvidia-smi`. The CUDA build needs at least one. Re-invoke the skill after fixing the host."
 
@@ -67,16 +70,16 @@ git checkout gguf-v0.19.0
 After the checkout, verify that the working tree is on the pinned tag and abort if it is not:
 
 ```bash
-TAG_REF="$(git rev-parse --verify refs/tags/gguf-v0.19.0 2>/dev/null)"
+TAG_REF="$(git rev-parse --verify 'refs/tags/gguf-v0.19.0^{commit}' 2>/dev/null)"
 ACTUAL_SHA="$(git rev-parse HEAD)"
 [ "$ACTUAL_SHA" = "$TAG_REF" ] || { echo "Expected $TAG_REF (tag gguf-v0.19.0), got $ACTUAL_SHA"; exit 1; }
 ```
 
-The pin is the **tag**, not a hard-coded SHA. The check verifies that the working tree's HEAD is the commit the tag points to. If the project releases `gguf-v0.19.1` later, only the `git checkout` line above needs to change; this check keeps working without any edit.
+The pin is the **tag**, not a hard-coded SHA. The check uses `^{commit}` to peel the tag object to the commit it points to — this is required because `gguf-v0.19.0` (and every llama.cpp release tag) is an **annotated** tag, and `git rev-parse refs/tags/...` returns the tag-object SHA, not the commit SHA, in that case. Without the peel, the check fails on a correct checkout. The check verifies that the working tree's HEAD is the commit the tag points to. If the project releases `gguf-v0.19.1` later, only the `git checkout` line above needs to change; this check keeps working without any edit.
 
 ## D. Configure with CMake
 
-Working directory: `src/llama.cpp/`. The variable `<CUDA_ARCHES>` is the value produced by step B (e.g. `12.0;8.9`).
+Working directory: `src/llama.cpp/`. The variable `<CUDA_ARCHES>` is the value produced by step B in **integer form** (e.g. `120;89`, not `12.0;8.9`).
 
 ```bash
 cmake -B build -S . \
@@ -90,6 +93,7 @@ The agent must use `-DCMAKE_BUILD_TYPE=Release`. Debug builds produce binaries t
 The output of `cmake` configure is verbose. The agent must scan it for any of these failure indicators and abort on any match:
 
 - `Could NOT find CUDA` → abort: "CMake did not find CUDA. Verify that the toolkit is installed and that `nvcc` is on `PATH`."
+- `CMAKE_CUDA_ARCHITECTURES` followed by `is not one of the following` → abort: "CMake rejected `CMAKE_CUDA_ARCHITECTURES`. The value must be a semicolon-separated list of integers (e.g. `120;89`), not the `X.Y` form from `nvidia-smi`. Re-check step B."
 - `CUDA error` → abort: "CMake configure failed with a CUDA error. Read the lines above for the specific cause."
 - `No CUDA arch specified` → abort: "CMake did not detect any CUDA architecture. Pass `-DCMAKE_CUDA_ARCHITECTURES` explicitly with the value from step B."
 
@@ -118,14 +122,17 @@ build/bin/llama-server --version
 build/bin/llama-cli --version
 ```
 
-The `--version` output must show the same `gguf-v0.19.0` version the source tree is pinned to. Extract the version string with:
+The `--version` output does NOT print a `gguf-vX.Y.Z` string; it prints `version: 1 (<short commit SHA>)`. Verify the build is from the pinned source by comparing the printed short SHA against the tag's peeled commit:
 
 ```bash
-build/bin/llama-server --version 2>&1 | grep -Eo 'gguf-v[0-9]+\.[0-9]+\.[0-9]+' | head -1
-build/bin/llama-cli --version 2>&1 | grep -Eo 'gguf-v[0-9]+\.[0-9]+\.[0-9]+' | head -1
+TAG_SHA="$(git -C src/llama.cpp rev-parse --short 'refs/tags/gguf-v0.19.0^{commit}')"
+SERVER_SHA="$(build/bin/llama-server --version 2>&1 | grep -Eo '\([0-9a-f]+\)' | tr -d '()' | head -1)"
+CLI_SHA="$(build/bin/llama-cli --version 2>&1 | grep -Eo '\([0-9a-f]+\)' | tr -d '()' | head -1)"
+[ "$SERVER_SHA" = "$TAG_SHA" ] || { echo "llama-server commit $SERVER_SHA does not match tag gguf-v0.19.0 ($TAG_SHA)"; exit 1; }
+[ "$CLI_SHA" = "$TAG_SHA" ] || { echo "llama-cli commit $CLI_SHA does not match tag gguf-v0.19.0 ($TAG_SHA)"; exit 1; }
 ```
 
-If either binary's `--version` does not print a `gguf-vX.Y.Z` string, or prints a different version than the pinned one, the build is from the wrong source. Abort with: "Binary version does not match the pinned tag `gguf-v0.19.0`. Re-do steps C and D from a clean clone."
+If either binary's printed short SHA does not match the pinned tag's peeled commit, the build is from the wrong source. Abort with: "Binary commit does not match the pinned tag `gguf-v0.19.0` ($TAG_SHA). Re-do steps C and D from a clean clone."
 
 ## G. Report to the user
 
@@ -135,10 +142,10 @@ After successful verification, present:
 Compile report
 --------------
 Source tree:    src/llama.cpp/
-Pin:            gguf-v0.19.0 (commit resolved at build time via `git rev-parse refs/tags/gguf-v0.19.0`)
-CUDA toolkit:   <output of `nvcc --version`>
-CUDA arch list: <value from step B>
-CMake:          <output of `cmake --version` first line>
+Pin:            gguf-v0.19.0 (commit resolved at build time via `git rev-parse refs/tags/gguf-v0.19.0^{commit}`)
+CUDA toolkit:   Cuda compilation tools, release <major>.<minor>, V<release>   (first line of `nvcc --version`)
+CUDA arch list: <value from step B, in integer form>
+CMake:          cmake version <version>   (first line of `cmake --version`)
 Binaries:
   build/bin/llama-server     <size>   <sha256 prefix>
   build/bin/llama-cli        <size>   <sha256 prefix>
@@ -153,6 +160,8 @@ Generate the size and sha256 lines with:
 ls -l build/bin/llama-server build/bin/llama-cli build/bin/llama-completion | awk '{print $5, $NF}'
 sha256sum build/bin/llama-server build/bin/llama-cli build/bin/llama-completion | awk '{print $1, $NF}'
 ```
+
+The `nvcc --version` output has multiple lines (header, copyright, build date, version, build path). Capture only the line that contains the version string (it starts with `Cuda compilation tools, release ...`). The full multi-line output is not part of the report — it goes in the build log if the user wants to inspect it.
 
 The "Compile verdict" here is the compile step's verdict, independent of `detect.md`'s verdict. It means "the binaries exist and were built from the pinned source tree"; it does not mean the server is running or that any model is loaded. If any verification in steps A–F failed and the recipe aborted, do not print this report.
 
