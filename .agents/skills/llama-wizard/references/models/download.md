@@ -122,5 +122,4 @@ The path is what the user (or `references/compose.md`) will plug into the `docke
 ## What this file does NOT do
 
 - It does not delete or replace existing models.
-- It does not start the server. That is `references/compose.md`.
 - It does not modify the compose file. The compose flow consumes the path produced here.
