@@ -145,7 +145,7 @@ Source tree:    src/llama.cpp/
 Pin:            gguf-v0.19.0 (commit resolved at build time via `git rev-parse refs/tags/gguf-v0.19.0^{commit}`)
 CUDA toolkit:   Cuda compilation tools, release <major>.<minor>, V<release>   (first line of `nvcc --version`)
 CUDA arch list: <value from step B, in integer form>
-CMake:          cmake version <version>   (first line of `cmake --version`)
+CMake:          <output of `cmake --version | head -1`>   (e.g. `cmake version 4.2.3`)
 Binaries:
   build/bin/llama-server     <size>   <sha256 prefix>
   build/bin/llama-cli        <size>   <sha256 prefix>
