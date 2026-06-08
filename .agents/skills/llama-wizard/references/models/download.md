@@ -32,26 +32,42 @@ Ask the user two questions before downloading anything:
 
 ## B. Compute the download URL and expected SHA256
 
-The Hugging Face LFS API returns the real download URL and the expected SHA256 for each LFS pointer in the repo.
+The Hugging Face LFS API returns metadata for each file in the repo, including the expected SHA256 of the LFS object under `.lfs.sha256`. Some repos do not expose this field; in that case the SHA256 is still available from the `x-linked-etag` header of a HEAD request to the resolve URL.
 
 ```bash
 QUANT="Q4_K_M"
 REPO="Jackrong/Qwopus3.6-27B-v2-MTP-GGUF"
 FILE="Qwopus3.6-27B-v2-MTP-${QUANT}.gguf"
 HF_API="https://huggingface.co/api/models/${REPO}"
+URL="https://huggingface.co/${REPO}/resolve/main/${FILE}"
 ```
 
-Fetch the file metadata (LFS pointer):
+Try the API first:
 
 ```bash
 curl -sL "${HF_API}" -o /tmp/hf_model.json
 SHA256=$(jq -r --arg f "${FILE}" '.siblings[] | select(.rfilename == $f) | .lfs.sha256' /tmp/hf_model.json)
-URL="${HF_API}/resolve/main/${FILE}"
+```
+
+If the API does not list the file at all (no matching `rfilename`), abort with: "Quantization `${QUANT}` not found in `${REPO}`. Verify the file name with https://huggingface.co/${REPO}/tree/main and re-run."
+
+If the file is listed but `.lfs.sha256` is empty or null, fall back to the HEAD request. The `x-linked-etag` header on the resolve URL is the canonical SHA256 of the LFS object (the file content itself, not the LFS pointer). `curl -I` follows the redirect from the resolve URL to the LFS storage backend; the etag on the final response is the one that matters.
+
+```bash
+if [ -z "${SHA256}" ] || [ "${SHA256}" = "null" ]; then
+  SHA256=$(curl -sILo /dev/null -D - "${URL}" \
+    | awk 'tolower($1) == "x-linked-etag:" {gsub(/"/,"",$2); print $2; exit}')
+fi
+```
+
+If after both attempts `SHA256` is still empty, the file is not reachable on HF. Abort with: "Could not determine SHA256 of `${FILE}` in `${REPO}`. The repo may be private, deleted, or the API may be rate-limiting. Check https://huggingface.co/${REPO}/tree/main manually."
+
+The download URL is the resolve URL, not the API URL:
+
+```bash
 echo "URL=${URL}"
 echo "SHA256=${SHA256}"
 ```
-
-If `SHA256` is empty, the file does not exist in the repo. Abort with: "Quantization `${QUANT}` not found in `${REPO}`. Verify the file name with https://huggingface.co/${REPO}/tree/main and re-run."
 
 ## C. Stage the model directory
 
