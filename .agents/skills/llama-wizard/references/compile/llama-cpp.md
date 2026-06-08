@@ -174,7 +174,7 @@ If any are missing, abort: "Build context is incomplete; the host build at `src/
 
 ## H. Build the Docker image
 
-The Dockerfile lives at `references/compile/Dockerfile` (sibling to this file). The image tag encodes the source pin.
+The Dockerfile lives at `.agents/skills/llama-wizard/references/compile/Dockerfile` (sibling to this flow file, in the skill's home directory). The image tag encodes the source pin.
 
 If an image with the target tag already exists locally, remove it first. `docker build` does not overwrite a tag — it silently re-tags the existing image, leaving any old content in place. Removing first guarantees the new image reflects the host's current build.
 
@@ -186,7 +186,7 @@ docker rmi -f llama-wizard-llama-cpp:gguf-v0.19.0 2>/dev/null || true
 
 ```bash
 docker build \
-  -f "$(pwd)/references/compile/Dockerfile" \
+  -f "$(pwd)/.agents/skills/llama-wizard/references/compile/Dockerfile" \
   -t llama-wizard-llama-cpp:gguf-v0.19.0 \
   build-context
 ```
