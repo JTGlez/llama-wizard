@@ -10,18 +10,18 @@ The agent must have already executed `references/detect.md` and accumulated the 
 
 | Field | Expected value | Source |
 | --- | --- | --- |
-| Selected flujo | `references/compile/llama-cpp.md` | `detect.md` step "Flujo selection" |
+| Selected flow | `references/compile/llama-cpp.md` | `detect.md` step "Flow selection" |
 | `gpu_vendor` | `nvidia` (or any non-empty value) | `detect.md` step E |
 | `gpus[]` | one entry per NVIDIA device, each with `index`, `name`, `compute_cap`, `memory.total` | `detect.md` step E |
 | `nvidia_runtime_registered` | `true` | `detect.md` step F |
 | `verdict` | `ready` or `ready with warnings` | `detect.md` |
-| `nvcc_present` | `true` | **this flujo** (re-checked) |
-| `cmake_present` | `true` | **this flujo** (re-checked) |
-| `nproc` | integer | **this flujo** (re-checked) |
+| `nvcc_present` | `true` | **this flow** (re-checked) |
+| `cmake_present` | `true` | **this flow** (re-checked) |
+| `nproc` | integer | **this flow** (re-checked) |
 
 The host's Linux distribution is not a precondition. The flow assumes Linux (gated by `detect.md`); the specific distro is irrelevant because the commands in this file (git, cmake, nvcc, docker, ldconfig) are present on every Linux distro with the prerequisites installed. If the user wants to add a distro-specific step, do it in `detect.md`'s heuristic list, not here.
 
-This flujo does **not** re-run `detect.md`. It assumes the previous run already produced the data. If the agent is invoked fresh (no `detect.md` context), abort with: "This flujo expects a prior `references/detect.md` run. Re-invoke the skill from the top."
+This flow does **not** re-run `detect.md`. It assumes the previous run already produced the data. If the agent is invoked fresh (no `detect.md` context), abort with: "This flow expects a prior `references/detect.md` run. Re-invoke the skill from the top."
 
 ## Why build from source
 
@@ -40,7 +40,7 @@ nproc
 Interpretation rules:
 
 - `cmake_present=false` → abort with: "`cmake` is not installed. Install it with the host's package manager (the same one `detect.md` already probed; see its heuristic list) and re-invoke the skill from the top."
-- `nvcc_present=false` → abort with: "The NVIDIA CUDA Toolkit (`nvcc`) is not installed. This flujo needs it to build `llama.cpp` with CUDA support. To install, follow the official instructions at https://developer.nvidia.com/cuda-downloads (the page lets you pick your distro and version). The user must run the install manually; re-invoke the skill afterwards. If you do not want to install the toolkit, switch to the pre-built image path: use the official image `ghcr.io/ggml-org/llama.cpp:server-cuda` directly (no local compile needed)."
+- `nvcc_present=false` → abort with: "The NVIDIA CUDA Toolkit (`nvcc`) is not installed. This flow needs it to build `llama.cpp` with CUDA support. To install, follow the official instructions at https://developer.nvidia.com/cuda-downloads (the page lets you pick your distro and version). The user must run the install manually; re-invoke the skill afterwards. If you do not want to install the toolkit, switch to the pre-built image path: use the official image `ghcr.io/ggml-org/llama.cpp:server-cuda` directly (no local compile needed)."
 - **Once an abort condition is met, stop. Do not run the remaining commands in this block, and do not try `nvcc --version` against a missing `nvcc` — the abort already covers the case.**
 
 ## B. Derive the CUDA architecture list
@@ -180,7 +180,7 @@ If any are missing, abort with: "Build context is incomplete; the host build at 
 
 ## H. Build the Docker image
 
-The `Dockerfile` for this flujo lives at `references/compile/Dockerfile` (sibling to this file). The agent must pass the resolved path of the Dockerfile and the staged build context to `docker build`. The image is tagged `llama-wizard-llama-cpp:gguf-v0.19.0` so the tag encodes the source pin.
+The `Dockerfile` for this flow lives at `references/compile/Dockerfile` (sibling to this file). The agent must pass the resolved path of the Dockerfile and the staged build context to `docker build`. The image is tagged `llama-wizard-llama-cpp:gguf-v0.19.0` so the tag encodes the source pin.
 
 ```bash
 docker build \
@@ -199,7 +199,7 @@ Run a smoke test that the image can be started, the binary inside it reports the
 docker run --rm --gpus all llama-wizard-llama-cpp:gguf-v0.19.0 --version
 ```
 
-The output must print `version: 1 (a290ce626)` (the short SHA matching `git -C src/llama.cpp rev-parse --short refs/tags/gguf-v0.19.0^{commit}`). If the binary inside the image reports a different commit, the Dockerfile is not the one expected; abort with: "Image-binary commit does not match the pinned source. Check that `references/compile/Dockerfile` matches the binarios in `build-context/bin/` and rebuild."
+The output must print `version: 1 (a290ce626)` (the short SHA matching `git -C src/llama.cpp rev-parse --short refs/tags/gguf-v0.19.0^{commit}`). If the binary inside the image reports a different commit, the Dockerfile is not the one expected; abort with: "Image-binary commit does not match the pinned source. Check that `references/compile/Dockerfile` matches the binaries in `build-context/bin/` and rebuild."
 
 If the command exits non-zero (e.g. `docker: error: ... no CUDA devices visible`), the nvidia runtime is not seeing the GPUs inside the container. Re-check step F of `detect.md` (the nvidia runtime registration check) and abort with: "`docker run --gpus all` failed; the nvidia container runtime is not exposing the GPUs to containers. Re-run detect.md and validate step F."
 
@@ -215,7 +215,7 @@ Pin:            gguf-v0.19.0 (commit resolved at build time via `git rev-parse r
 CUDA toolkit:   Cuda compilation tools, release <major>.<minor>, V<release>   (first line of `nvcc --version`)
 CUDA arch list: <value from step B, in integer form>
 CMake:          <output of `cmake --version | head -1`>   (e.g. `cmake version 4.2.3`)
-Host binarios:
+Host binaries:
   src/llama.cpp/build/bin/llama-server     <size>   <sha256 prefix>
   src/llama.cpp/build/bin/llama-cli        <size>   <sha256 prefix>
   src/llama.cpp/build/bin/llama-completion <size>   <sha256 prefix>
@@ -234,19 +234,19 @@ ls -l src/llama.cpp/build/bin/llama-server src/llama.cpp/build/bin/llama-cli src
 sha256sum src/llama.cpp/build/bin/llama-server src/llama.cpp/build/bin/llama-cli src/llama.cpp/build/bin/llama-completion | awk '{print $1, $NF}'
 ```
 
-The "Compile verdict" here is the compile step's verdict, independent of `detect.md`'s verdict. It means "the binarios exist, were built from the pinned source tree, and were packaged into a Docker image that the runtime can use." It does **not** mean the server is running or that any model is loaded. If any verification in steps A–I failed and the flujo aborted, do not print this report.
+The "Compile verdict" here is the compile step's verdict, independent of `detect.md`'s verdict. It means "the binaries exist, were built from the pinned source tree, and were packaged into a Docker image that the runtime can use." It does **not** mean the server is running or that any model is loaded. If any verification in steps A–I failed and the flow aborted, do not print this report.
 
 ## What this file does NOT do
 
-- It does not download models. That is out of scope for this flujo.
+- It does not download models. That is out of scope for this flow.
 - It does not start the server with a real model loaded. The image is built and verified to boot (`--version`), but starting the server with a GGUF model and a real inference workload is the responsibility of `references/compose.md` (forthcoming).
 - It does not modify any file outside `src/llama.cpp/`, `build-context/`, and the resulting Docker image. In particular, it does not install system packages; the user must do that and re-invoke the skill from the top.
 
-## Inputs this flujo expects from the prior agent context
+## Inputs this flow expects from the prior agent context
 
 Re-stated for clarity so the subagent (or the human running the skill) can sanity-check before executing:
 
-1. The selected flujo from `detect.md` (must be `references/compile/llama-cpp.md`).
+1. The selected flow from `detect.md` (must be `references/compile/llama-cpp.md`).
 2. The list of NVIDIA GPUs with their `compute_cap` values.
 3. The `nproc` value.
 4. The presence of `nvcc` and `cmake` on `PATH`.
