@@ -162,14 +162,16 @@ rm -rf build-context && mkdir -p build-context/bin
 cp src/llama.cpp/build/bin/llama-server      build-context/bin/
 cp src/llama.cpp/build/bin/llama-cli         build-context/bin/
 cp src/llama.cpp/build/bin/llama-completion  build-context/bin/
-cp src/llama.cpp/build/bin/libggml-*.so*     build-context/bin/
+cp src/llama.cpp/build/bin/*.so*             build-context/bin/
 ```
+
+The `*.so*` glob copies every variant of every shared-library family the source build produced (libggml-*, libllama-*, libmtmd-*, each as the SONAME major symlink plus the versioned file). The Dockerfile's `COPY bin/*.so*` mirrors this.
 
 Verify the expected files are present:
 
 ```bash
 ls build-context/bin/llama-server build-context/bin/llama-cli build-context/bin/llama-completion
-ls build-context/bin/libggml-cuda.so*
+ls build-context/bin/libggml.so.0 build-context/bin/libllama.so.0 build-context/bin/libmtmd.so.0 build-context/bin/libggml-cuda.so.0
 ```
 
 If any are missing, abort: "Build context is incomplete; the host build at `src/llama.cpp/build/bin/` is missing one of the expected files. Re-run steps A–F."
