@@ -2,7 +2,7 @@
 
 ## Goal
 
-Detect the host environment, select a recipe folder that matches the detected distro, and present a structured report to the user before any install or compile step.
+Detect the host environment, gate the skill on a verdict (ready / ready with warnings / blocked), and present a structured report to the user before any install or compile step. The detected distro is reported but does not select a recipe folder; recipes under `references/` are distro-agnostic.
 
 ## Scope
 
@@ -191,25 +191,9 @@ In the report, render the row as `Docker group: user <CURRENT_USER> is in docker
 
 ## Recipe selection
 
-After the detection steps, select a recipe folder using the table below. Matching algorithm: walk the rows in order; for each row, match `(id, VERSION_ID, wsl)` against the detected values. If the WSL column is `true`, the row matches only when `wsl=true`; if `false`, only when `wsl=false`; if `any`, the WSL value is ignored. The first row that matches wins. If no row matches, fall through to the final "anything else" row.
+Recipes under `references/` are distro-agnostic: their commands do not change with the host's distro. The only step that ever needed distro-specific knowledge was this detection step (which is now done). The skill therefore does not select a "recipe folder"; the next step (driven by the skill entry point) loads the path-gate recipes (`compile/`, `docker/`, `models/`, `compose`) directly.
 
-| Distro (`id`) | Version (`VERSION_ID`) | WSL | Recipe folder |
-| --- | --- | --- | --- |
-| `ubuntu` | `26.04` | true | `ubuntu-26.04-wsl2` |
-| `ubuntu` | `26.04` | false | `ubuntu-26.04` |
-| `ubuntu` | `24.04` | true | `ubuntu-24.04-wsl2` |
-| `ubuntu` | `24.04` | false | `ubuntu-24.04` |
-| `ubuntu` | any other | any | abort: "No recipe for ubuntu <version>. Open an issue or contribute one under `references/ubuntu-<version>/`." |
-| `debian` | `12` | any | `debian-12` |
-| `debian` | any other | any | abort: "No recipe for debian <version>." |
-| `fedora` | `41` | any | `fedora-41` |
-| `fedora` | any other | any | abort: "No recipe for fedora <version>." |
-| `arch` | rolling | any | `arch` |
-| anything else | — | — | abort: "No recipe for <id> <version>. Available recipes: <list folders under references/>." |
-
-If the recipe folder does not exist on disk → abort with: "Selected recipe folder `<folder>` does not exist in the repo. Pull the latest version or contribute the recipe."
-
-The folder existence check is mandatory. After selecting the folder from the table, the agent must run `test -d references/<folder>` (or `stat references/<folder>`) and abort if the folder is absent.
+The role of the detection result is to **report** what was found (distro, kernel, WSL flag, GPUs, tools) and to **gate** the next step on the verdict. The verdict is computed in the next section.
 
 ## Report to the user
 
@@ -230,7 +214,7 @@ Disk free:        952 GiB
 Tools:            git OK, make OK, cmake OK, gcc OK, g++ OK, curl OK, jq OK, pkg-config OK
 Docker group:     user jorge is in docker group
 
-Selected recipe:  references/ubuntu-26.04-wsl2/
+Selected recipe:  references/compile/llama-cpp.md   (and references/docker/llama-cpp.md, forthcoming)
 
 Verdict: ready
 ```
@@ -256,5 +240,5 @@ In the "no recipe" case, the report table is printed first so the user can see w
 - It does not install anything.
 - It does not modify the filesystem.
 - It does not write any state file.
-- It does not load any distro-specific recipe. The next step (driven by the skill entry point) is responsible for loading the selected recipe folder.
+- It does not load any recipe. The next step (driven by the skill entry point) is responsible for loading the path-gate recipes directly from `references/compile/`, `references/docker/`, etc.
 - It does not download models or clone repos.
