@@ -191,17 +191,29 @@ This step does not recompile llama.cpp; it only installs base packages and copie
 
 ## I. Verify the image
 
-Smoke test: the binary inside the image must report the pinned commit.
+Smoke test: the binary inside the image must report the pinned commit **and** the GPUs detected by `ggml_cuda_init`. The `--version` flag calls `ggml_cuda_init` to enumerate visible devices even though it does not load a model, so a clean run also validates the nvidia container runtime wiring.
 
 ```bash
 docker run --rm --gpus all llama-wizard-llama-cpp:gguf-v0.19.0 --version
 ```
 
-Expected output: `version: 1 (a290ce626)` (the short SHA of the peeled tag `gguf-v0.19.0^{commit}`). If the binary reports a different commit, abort: "Image-binary commit does not match the pinned source. Check that `references/compile/Dockerfile` matches the binaries in `build-context/bin/` and rebuild."
+Expected output includes the short SHA of the peeled tag `gguf-v0.19.0^{commit}` and one line per NVIDIA GPU reported by `ggml_cuda_init`. The exact `version:` line and the exact GPU list depend on the host; the form is:
+
+```
+ggml_cuda_init: found <N> CUDA devices (Total VRAM: <N> MiB):
+  Device 0: <name>, compute capability <X.Y>, VMM: yes, VRAM: <N> MiB
+  ...
+version: 1 (a290ce626)
+built with GNU <ver> for Linux x86_64
+```
+
+If the binary reports a commit other than `a290ce626`, abort: "Image-binary commit does not match the pinned source. Check that `references/compile/Dockerfile` matches the binaries in `build-context/bin/` and rebuild."
 
 If the command exits non-zero (e.g. `docker: error: ... no CUDA devices visible`), the nvidia runtime is not seeing the GPUs inside the container. Abort: "`docker run --gpus all` failed; the nvidia container runtime is not exposing the GPUs to containers. Re-run detect.md and validate step F."
 
-This step does not start a real inference server (no model loaded). That belongs to `references/compose.md`.
+If `ggml_cuda_init` reports zero devices but the binary still exits zero, the host's NVIDIA driver is installed but the container's nvidia runtime is misconfigured (the runtime is in `docker info` but not actually mounting the devices). Abort: "`ggml_cuda_init` reported zero devices inside the container. Re-run detect.md and validate step F (nvidia runtime registration)."
+
+Loading a real model and validating `/health` and `/v1/chat/completions` is the responsibility of `references/compose.md` (forthcoming).
 
 ## J. Report to the user
 
