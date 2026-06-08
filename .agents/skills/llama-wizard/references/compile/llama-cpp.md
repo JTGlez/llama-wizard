@@ -129,8 +129,6 @@ The agent must wait for the build to finish before continuing to step F. If the 
 
 ## F. Verify the binaries
 
-The `cd` is in a separate command block here because steps C, D, and E have already left the shell in the source tree; the next block needs a clean `cd` so the pin check (`git rev-parse` without `-C`) works regardless of where the previous step left `cwd`.
-
 ```bash
 cd src/llama.cpp
 test -x build/bin/llama-server     || { echo "missing: build/bin/llama-server"; exit 1; }
@@ -141,21 +139,19 @@ build/bin/llama-server --version
 build/bin/llama-cli --version
 ```
 
-The `--version` output prints `version: 1 (<short commit SHA>)`, not a `gguf-vX.Y.Z` string. Verify the build is from the pinned source by comparing the printed short SHA against the tag's peeled commit:
+`--version` prints `version: 1 (<short commit SHA>)`. Verify the build is from the pinned source by comparing the short SHA in the binary's output against the tag's peeled commit (use `^{commit}` to skip the tag-object SHA on annotated tags):
 
 ```bash
 TAG_SHA="$(git rev-parse --short 'refs/tags/gguf-v0.19.0^{commit}')"
 SERVER_SHA="$(build/bin/llama-server --version 2>&1 | grep -Eo '\([0-9a-f]+\)' | tr -d '()' | head -1)"
-CLI_SHA="$(build/bin/llama-cli --version 2>&1 | grep -Eo '\([0-9a-f]+\)' | tr -d '()' | head -1)"
 [ "$SERVER_SHA" = "$TAG_SHA" ] || { echo "llama-server commit $SERVER_SHA does not match tag gguf-v0.19.0 ($TAG_SHA)"; exit 1; }
-[ "$CLI_SHA" = "$TAG_SHA" ] || { echo "llama-cli commit $CLI_SHA does not match tag gguf-v0.19.0 ($TAG_SHA)"; exit 1; }
 ```
 
-If either SHA does not match, abort: "Binary commit does not match the pinned tag `gguf-v0.19.0` ($TAG_SHA). Re-do steps C and D from a clean clone."
+If mismatched, abort: "Binary commit does not match the pinned tag `gguf-v0.19.0` ($TAG_SHA). Re-do steps C and D from a clean clone."
+
+`llama-cli` and `llama-completion` come from the same build, so no separate SHA check is needed for them.
 
 ## G. Stage the build context
-
-The Docker image reuses the host build, not a fresh in-container build.
 
 ```bash
 rm -rf build-context && mkdir -p build-context/bin
@@ -165,20 +161,20 @@ cp src/llama.cpp/build/bin/llama-completion  build-context/bin/
 cp src/llama.cpp/build/bin/*.so*             build-context/bin/
 ```
 
-The `*.so*` glob copies every variant of every shared-library family the source build produced (libggml-*, libllama-*, libmtmd-*, each as the SONAME major symlink plus the versioned file). The Dockerfile's `COPY bin/*.so*` mirrors this.
+The Dockerfile's `COPY bin/*.so*` mirrors the `*.so*` glob above; if both copy the same set, the three expected SONAMEs (libggml.so.0, libllama.so.0, libmtmd.so.0) will be present in the image.
 
 Verify the expected files are present:
 
 ```bash
-ls build-context/bin/llama-server build-context/bin/llama-cli build-context/bin/llama-completion
-ls build-context/bin/libggml.so.0 build-context/bin/libllama.so.0 build-context/bin/libmtmd.so.0 build-context/bin/libggml-cuda.so.0
+ls build-context/bin/llama-server build-context/bin/llama-cli build-context/bin/llama-completion \
+  build-context/bin/libggml.so.0 build-context/bin/libllama.so.0 build-context/bin/libmtmd.so.0
 ```
 
 If any are missing, abort: "Build context is incomplete; the host build at `src/llama.cpp/build/bin/` is missing one of the expected files. Re-run steps A–F."
 
 ## H. Build the Docker image
 
-The `Dockerfile` for this flow lives at `references/compile/Dockerfile` (sibling to this file). The image is tagged `llama-wizard-llama-cpp:gguf-v0.19.0` so the tag encodes the source pin.
+The Dockerfile lives at `references/compile/Dockerfile` (sibling to this file). The image tag encodes the source pin.
 
 ```bash
 docker build \
@@ -187,33 +183,19 @@ docker build \
   build-context
 ```
 
-This step does not recompile llama.cpp; it only installs base packages and copies pre-built artifacts. Wall time depends mostly on Docker's layer cache and the host's network (one `apt-get update` for the base image), not on the host's CPU or GPU.
-
 ## I. Verify the image
 
-Smoke test: the binary inside the image must report the pinned commit **and** the GPUs detected by `ggml_cuda_init`. The `--version` flag calls `ggml_cuda_init` to enumerate visible devices even though it does not load a model, so a clean run also validates the nvidia container runtime wiring.
+The `--version` flag calls `ggml_cuda_init` to enumerate visible devices (even though it does not load a model), so a clean run also validates the nvidia container runtime wiring. The commit SHA in the output is the same one step F validated; this step only validates the container side.
 
 ```bash
 docker run --rm --gpus all llama-wizard-llama-cpp:gguf-v0.19.0 --version
 ```
 
-Expected output includes the short SHA of the peeled tag `gguf-v0.19.0^{commit}` and one line per NVIDIA GPU reported by `ggml_cuda_init`. The exact `version:` line and the exact GPU list depend on the host; the form is:
+Failures:
 
-```
-ggml_cuda_init: found <N> CUDA devices (Total VRAM: <N> MiB):
-  Device 0: <name>, compute capability <X.Y>, VMM: yes, VRAM: <N> MiB
-  ...
-version: 1 (a290ce626)
-built with GNU <ver> for Linux x86_64
-```
-
-If the binary reports a commit other than `a290ce626`, abort: "Image-binary commit does not match the pinned source. Check that `references/compile/Dockerfile` matches the binaries in `build-context/bin/` and rebuild."
-
-If the command exits non-zero (e.g. `docker: error: ... no CUDA devices visible`), the nvidia runtime is not seeing the GPUs inside the container. Abort: "`docker run --gpus all` failed; the nvidia container runtime is not exposing the GPUs to containers. Re-run detect.md and validate step F."
-
-If `ggml_cuda_init` reports zero devices but the binary still exits zero, the host's NVIDIA driver is installed but the container's nvidia runtime is misconfigured (the runtime is in `docker info` but not actually mounting the devices). Abort: "`ggml_cuda_init` reported zero devices inside the container. Re-run detect.md and validate step F (nvidia runtime registration)."
-
-Loading a real model and validating `/health` and `/v1/chat/completions` is the responsibility of `references/compose.md` (forthcoming).
+- **Exit non-zero** (e.g. `docker: error: ... no CUDA devices visible`): the nvidia runtime is not seeing the GPUs. Abort: "`docker run --gpus all` failed; the nvidia container runtime is not exposing the GPUs to containers. Re-run detect.md and validate step F."
+- **Exit zero, but `ggml_cuda_init` reports zero devices**: the runtime is registered but not actually mounting the devices. Abort: "`ggml_cuda_init` reported zero devices inside the container. Re-run detect.md and validate step F (nvidia runtime registration)."
+- **Exit zero and `ggml_cuda_init` lists the host's GPUs**: success. Proceed to step J.
 
 ## J. Report to the user
 
@@ -246,10 +228,10 @@ ls -l src/llama.cpp/build/bin/llama-server src/llama.cpp/build/bin/llama-cli src
 sha256sum src/llama.cpp/build/bin/llama-server src/llama.cpp/build/bin/llama-cli src/llama.cpp/build/bin/llama-completion | awk '{print $1, $NF}'
 ```
 
-The "Compile verdict" here is the compile step's verdict, independent of `detect.md`'s verdict. It means "the binaries exist, were built from the pinned source tree, and were packaged into a Docker image that the runtime can use." It does **not** mean the server is running or that any model is loaded. If any verification in steps A–I failed and the flow aborted, do not print this report.
+The "Compile verdict" here is the compile step's verdict, independent of `detect.md`'s verdict: "the binaries exist, were built from the pinned source tree, and were packaged into a Docker image that the runtime can use." It does **not** mean the server is running or that any model is loaded. If any verification in steps A–I failed and the flow aborted, do not print this report.
 
 ## What this file does NOT do
 
-- It does not download models.
-- It does not start the server with a real model loaded. Starting the server with a GGUF model is the responsibility of `references/compose.md` (forthcoming).
-- It does not modify any file outside `src/llama.cpp/`, `build-context/`, and the resulting Docker image. In particular, it does not install system packages; the user must do that and re-invoke the skill from the top.
+- It does not download models. (See `references/models/` — forthcoming.)
+- It does not start the server with a real model loaded. That is `references/compose.md` (forthcoming).
+- It does not install system packages. The user must do that and re-invoke the skill from the top.
